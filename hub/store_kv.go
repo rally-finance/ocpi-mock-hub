@@ -3,6 +3,8 @@ package hub
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/url"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -26,7 +28,19 @@ func NewRedisStore(redisURL string) (*RedisStore, error) {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 
+	log.Printf("[redis] connected to %s", maskRedisURL(redisURL))
 	return &RedisStore{rdb: rdb}, nil
+}
+
+func maskRedisURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(invalid URL)"
+	}
+	if u.User != nil {
+		u.User = url.UserPassword(u.User.Username(), "***")
+	}
+	return u.Redacted()
 }
 
 func (r *RedisStore) ctx() context.Context {

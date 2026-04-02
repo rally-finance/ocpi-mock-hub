@@ -1,264 +1,165 @@
 package hub
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// KVStore uses Vercel KV (Redis) REST API for state persistence.
-type KVStore struct {
-	url   string
-	token string
+// RedisStore uses a standard Redis connection for state persistence.
+type RedisStore struct {
+	rdb *redis.Client
 }
 
-func NewKVStore(url, token string) *KVStore {
-	return &KVStore{
-		url:   strings.TrimRight(url, "/"),
-		token: token,
+func NewRedisStore(redisURL string) (*RedisStore, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
 	}
+	rdb := redis.NewClient(opts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("redis ping: %w", err)
+	}
+
+	return &RedisStore{rdb: rdb}, nil
 }
 
-func (kv *KVStore) kvGET(key string) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/get/%s", kv.url, key), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+kv.token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+func (r *RedisStore) ctx() context.Context {
+	return context.Background()
+}
 
-	var result struct {
-		Result *string `json:"result"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
-	}
-	if result.Result == nil {
+func (r *RedisStore) get(key string) (string, error) {
+	val, err := r.rdb.Get(r.ctx(), key).Result()
+	if err == redis.Nil {
 		return "", nil
 	}
-	return *result.Result, nil
+	return val, err
 }
 
-func (kv *KVStore) kvSET(key, value string) error {
-	payload, _ := json.Marshal([]string{"SET", key, value})
-	req, err := http.NewRequest("POST", kv.url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+kv.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
+func (r *RedisStore) set(key, value string) error {
+	return r.rdb.Set(r.ctx(), key, value, 0).Err()
 }
 
-func (kv *KVStore) kvDEL(key string) error {
-	payload, _ := json.Marshal([]string{"DEL", key})
-	req, err := http.NewRequest("POST", kv.url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+kv.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
+func (r *RedisStore) del(key string) error {
+	return r.rdb.Del(r.ctx(), key).Err()
 }
 
-// kvSCAN returns all keys matching a pattern using the SCAN command.
-func (kv *KVStore) kvSCAN(pattern string) ([]string, error) {
+func (r *RedisStore) scan(pattern string) ([]string, error) {
 	var allKeys []string
-	cursor := "0"
-	for {
-		payload, _ := json.Marshal([]string{"SCAN", cursor, "MATCH", pattern, "COUNT", "100"})
-		req, err := http.NewRequest("POST", kv.url, bytes.NewReader(payload))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+kv.token)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		var result struct {
-			Result []any `json:"result"`
-		}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, err
-		}
-		if len(result.Result) < 2 {
-			break
-		}
-
-		cursor = fmt.Sprintf("%v", result.Result[0])
-		if keys, ok := result.Result[1].([]any); ok {
-			for _, k := range keys {
-				if s, ok := k.(string); ok {
-					allKeys = append(allKeys, s)
-				}
-			}
-		}
-
-		if cursor == "0" {
-			break
-		}
+	iter := r.rdb.Scan(r.ctx(), 0, pattern, 100).Iterator()
+	for iter.Next(r.ctx()) {
+		allKeys = append(allKeys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
 	}
 	return allKeys, nil
 }
 
-func (kv *KVStore) kvGETMulti(keys []string) ([]string, error) {
+func (r *RedisStore) listByPrefix(pattern string) ([][]byte, error) {
+	keys, err := r.scan(pattern)
+	if err != nil {
+		return nil, err
+	}
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	args := append([]string{"MGET"}, keys...)
-	payload, _ := json.Marshal(args)
-	req, err := http.NewRequest("POST", kv.url, bytes.NewReader(payload))
+	vals, err := r.rdb.MGet(r.ctx(), keys...).Result()
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+kv.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var result struct {
-		Result []any `json:"result"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	values := make([]string, len(result.Result))
-	for i, v := range result.Result {
-		if s, ok := v.(string); ok {
-			values[i] = s
+	result := make([][]byte, 0, len(vals))
+	for _, v := range vals {
+		if s, ok := v.(string); ok && s != "" {
+			result = append(result, []byte(s))
 		}
 	}
-	return values, nil
+	return result, nil
 }
 
 // Store interface implementation
 
-func (kv *KVStore) GetTokenB() (string, error)              { return kv.kvGET("handshake:token_b") }
-func (kv *KVStore) SetTokenB(token string) error             { return kv.kvSET("handshake:token_b", token) }
-func (kv *KVStore) GetEMSPCallbackURL() (string, error)     { return kv.kvGET("handshake:emsp_url") }
-func (kv *KVStore) SetEMSPCallbackURL(url string) error     { return kv.kvSET("handshake:emsp_url", url) }
-func (kv *KVStore) GetEMSPCredentials() ([]byte, error) {
-	v, err := kv.kvGET("handshake:emsp_creds")
+func (r *RedisStore) GetTokenB() (string, error)          { return r.get("handshake:token_b") }
+func (r *RedisStore) SetTokenB(token string) error         { return r.set("handshake:token_b", token) }
+func (r *RedisStore) GetEMSPCallbackURL() (string, error)  { return r.get("handshake:emsp_url") }
+func (r *RedisStore) SetEMSPCallbackURL(url string) error  { return r.set("handshake:emsp_url", url) }
+func (r *RedisStore) GetEMSPCredentials() ([]byte, error) {
+	v, err := r.get("handshake:emsp_creds")
 	return []byte(v), err
 }
-func (kv *KVStore) SetEMSPCredentials(creds []byte) error {
-	return kv.kvSET("handshake:emsp_creds", string(creds))
+func (r *RedisStore) SetEMSPCredentials(creds []byte) error {
+	return r.set("handshake:emsp_creds", string(creds))
+}
+func (r *RedisStore) GetEMSPOwnToken() (string, error) {
+	return r.get("handshake:emsp_own_token")
+}
+func (r *RedisStore) SetEMSPOwnToken(token string) error {
+	return r.set("handshake:emsp_own_token", token)
+}
+func (r *RedisStore) GetEMSPVersionsURL() (string, error) {
+	return r.get("handshake:emsp_versions_url")
+}
+func (r *RedisStore) SetEMSPVersionsURL(url string) error {
+	return r.set("handshake:emsp_versions_url", url)
 }
 
-func (kv *KVStore) GetEMSPOwnToken() (string, error) {
-	return kv.kvGET("handshake:emsp_own_token")
-}
-func (kv *KVStore) SetEMSPOwnToken(token string) error {
-	return kv.kvSET("handshake:emsp_own_token", token)
-}
-func (kv *KVStore) GetEMSPVersionsURL() (string, error) {
-	return kv.kvGET("handshake:emsp_versions_url")
-}
-func (kv *KVStore) SetEMSPVersionsURL(url string) error {
-	return kv.kvSET("handshake:emsp_versions_url", url)
+func (r *RedisStore) PutToken(cc, pid, uid string, token []byte) error {
+	return r.set(fmt.Sprintf("token:%s/%s/%s", cc, pid, uid), string(token))
 }
 
-func (kv *KVStore) PutToken(cc, pid, uid string, token []byte) error {
-	return kv.kvSET(fmt.Sprintf("token:%s/%s/%s", cc, pid, uid), string(token))
-}
-
-func (kv *KVStore) GetToken(cc, pid, uid string) ([]byte, error) {
-	v, err := kv.kvGET(fmt.Sprintf("token:%s/%s/%s", cc, pid, uid))
+func (r *RedisStore) GetToken(cc, pid, uid string) ([]byte, error) {
+	v, err := r.get(fmt.Sprintf("token:%s/%s/%s", cc, pid, uid))
 	if v == "" {
 		return nil, err
 	}
 	return []byte(v), err
 }
 
-func (kv *KVStore) ListTokens() ([][]byte, error) {
-	return kv.listByPrefix("token:*")
+func (r *RedisStore) ListTokens() ([][]byte, error) {
+	return r.listByPrefix("token:*")
 }
 
-func (kv *KVStore) PutSession(id string, session []byte) error {
-	return kv.kvSET("session:"+id, string(session))
+func (r *RedisStore) PutSession(id string, session []byte) error {
+	return r.set("session:"+id, string(session))
 }
 
-func (kv *KVStore) GetSession(id string) ([]byte, error) {
-	v, err := kv.kvGET("session:" + id)
+func (r *RedisStore) GetSession(id string) ([]byte, error) {
+	v, err := r.get("session:" + id)
 	if v == "" {
 		return nil, err
 	}
 	return []byte(v), err
 }
 
-func (kv *KVStore) ListSessions() ([][]byte, error) {
-	return kv.listByPrefix("session:*")
+func (r *RedisStore) ListSessions() ([][]byte, error) {
+	return r.listByPrefix("session:*")
 }
 
-func (kv *KVStore) DeleteSession(id string) error {
-	return kv.kvDEL("session:" + id)
+func (r *RedisStore) DeleteSession(id string) error {
+	return r.del("session:" + id)
 }
 
-func (kv *KVStore) PutCDR(id string, cdr []byte) error {
-	return kv.kvSET("cdr:"+id, string(cdr))
+func (r *RedisStore) PutCDR(id string, cdr []byte) error {
+	return r.set("cdr:"+id, string(cdr))
 }
 
-func (kv *KVStore) ListCDRs() ([][]byte, error) {
-	return kv.listByPrefix("cdr:*")
+func (r *RedisStore) ListCDRs() ([][]byte, error) {
+	return r.listByPrefix("cdr:*")
 }
 
-func (kv *KVStore) GetMode() (string, error) {
-	v, err := kv.kvGET("config:mode")
+func (r *RedisStore) GetMode() (string, error) {
+	v, err := r.get("config:mode")
 	if v == "" {
 		return "happy", err
 	}
 	return v, err
 }
 
-func (kv *KVStore) SetMode(mode string) error {
-	return kv.kvSET("config:mode", mode)
-}
-
-func (kv *KVStore) listByPrefix(pattern string) ([][]byte, error) {
-	keys, err := kv.kvSCAN(pattern)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	values, err := kv.kvGETMulti(keys)
-	if err != nil {
-		return nil, err
-	}
-	result := make([][]byte, 0, len(values))
-	for _, v := range values {
-		if v != "" {
-			result = append(result, []byte(v))
-		}
-	}
-	return result, nil
+func (r *RedisStore) SetMode(mode string) error {
+	return r.set("config:mode", mode)
 }

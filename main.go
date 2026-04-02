@@ -12,7 +12,10 @@ import (
 
 func main() {
 	cfg := hub.LoadConfig()
-	app := hub.NewApp(cfg)
+	app, err := hub.NewApp(cfg)
+	if err != nil {
+		log.Fatalf("failed to initialize app: %v", err)
+	}
 	router := hub.NewRouter(app)
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -32,8 +35,8 @@ func main() {
 	log.Printf("  eMSP callback: %s", cfg.EMSPCallbackURL)
 	log.Printf("  Seed locations: %d", cfg.SeedLocations)
 	log.Printf("  Store backend: %s", func() string {
-		if cfg.UseKV() {
-			return "Vercel KV"
+		if cfg.UseRedis() {
+			return "Redis"
 		}
 		return "in-memory"
 	}())

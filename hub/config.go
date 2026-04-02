@@ -16,8 +16,7 @@ type Config struct {
 	SeedLocations     int
 	EncodeBase64      bool
 	Mode              string
-	KVRestAPIURL      string
-	KVRestAPIToken    string
+	RedisURL          string
 }
 
 func LoadConfig() Config {
@@ -32,13 +31,12 @@ func LoadConfig() Config {
 		SeedLocations:     envInt("MOCK_SEED_LOCATIONS", 50),
 		EncodeBase64:      envOr("MOCK_ENCODE_BASE64", "false") == "true",
 		Mode:              envOr("MOCK_MODE", "happy"),
-		KVRestAPIURL:      os.Getenv("KV_REST_API_URL"),
-		KVRestAPIToken:    os.Getenv("KV_REST_API_TOKEN"),
+		RedisURL:          os.Getenv("REDIS_URL"),
 	}
 }
 
-func (c Config) UseKV() bool {
-	return c.KVRestAPIURL != "" && c.KVRestAPIToken != ""
+func (c Config) UseRedis() bool {
+	return c.RedisURL != ""
 }
 
 func envOr(key, fallback string) string {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 type Store interface {
 	GetTokenB() (string, error)
 	GetEMSPCallbackURL() (string, error)
+	GetEMSPOwnToken() (string, error)
 	PutSession(id string, session []byte) error
 	GetSession(id string) ([]byte, error)
 	ListSessions() ([][]byte, error)
@@ -31,7 +33,7 @@ type Simulator struct {
 	emspCallbackURL string
 	commandDelayMS   int
 	sessionDurationS int
-	tokenB           string
+	authToken        string
 }
 
 func New(store Store, seed *fakegen.SeedData, emspCallback string, delayMS, durationS int) *Simulator {
@@ -81,8 +83,9 @@ func (s *Simulator) Tick() error {
 	if emspURL == "" {
 		emspURL = s.emspCallbackURL
 	}
+	emspURL = stripVersionsSuffix(emspURL)
 
-	s.tokenB, _ = s.store.GetTokenB()
+	s.authToken, _ = s.store.GetEMSPOwnToken()
 
 	now := time.Now().UTC()
 
@@ -243,8 +246,8 @@ func (s *Simulator) pushToEMSP(url string, payload any) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if s.tokenB != "" {
-		req.Header.Set("Authorization", "Token "+s.tokenB)
+	if s.authToken != "" {
+		req.Header.Set("Authorization", "Token "+s.authToken)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -254,6 +257,18 @@ func (s *Simulator) pushToEMSP(url string, payload any) {
 	}
 	resp.Body.Close()
 	log.Printf("[push] %s -> %d", url, resp.StatusCode)
+}
+
+// stripVersionsSuffix removes a trailing "/versions" or "/ocpi/versions" path
+// from a URL so it can be used as a base for receiver endpoint construction.
+// The OCPI credentials URL field points at the versions endpoint, but pushes
+// target /receiver/locations/... etc. relative to the OCPI base path.
+func stripVersionsSuffix(u string) string {
+	u = strings.TrimRight(u, "/")
+	if strings.HasSuffix(u, "/versions") {
+		return strings.TrimSuffix(u, "/versions")
+	}
+	return u
 }
 
 func roundTo(val float64, decimals int) float64 {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/rally-finance/ocpi-mock-hub/simulation"
 )
@@ -134,7 +135,7 @@ func (h *Handler) TriggerTick(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) PushLocations(w http.ResponseWriter, r *http.Request) {
-	tokenB, emspURL, err := h.resolveEMSPPushTarget()
+	authToken, emspURL, err := h.resolveEMSPPushTarget()
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -152,12 +153,12 @@ func (h *Handler) PushLocations(w http.ResponseWriter, r *http.Request) {
 		cfg.Count = 50
 	}
 
-	summary := simulation.PushLocations(cfg, h.Seed, emspURL, tokenB)
+	summary := simulation.PushLocations(cfg, h.Seed, emspURL, authToken)
 	writeJSON(w, http.StatusOK, summary)
 }
 
 func (h *Handler) PushTariffs(w http.ResponseWriter, r *http.Request) {
-	tokenB, emspURL, err := h.resolveEMSPPushTarget()
+	authToken, emspURL, err := h.resolveEMSPPushTarget()
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -172,14 +173,18 @@ func (h *Handler) PushTariffs(w http.ResponseWriter, r *http.Request) {
 		cfg.Pattern = "burst"
 	}
 
-	summary := simulation.PushTariffs(cfg, h.Seed, emspURL, tokenB)
+	summary := simulation.PushTariffs(cfg, h.Seed, emspURL, authToken)
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func (h *Handler) resolveEMSPPushTarget() (tokenB, emspURL string, err error) {
-	tokenB, _ = h.Store.GetTokenB()
+func (h *Handler) resolveEMSPPushTarget() (authToken, emspURL string, err error) {
+	tokenB, _ := h.Store.GetTokenB()
 	if tokenB == "" {
 		return "", "", fmt.Errorf("no handshake completed (Token B not set)")
+	}
+	authToken, _ = h.Store.GetEMSPOwnToken()
+	if authToken == "" {
+		return "", "", fmt.Errorf("no eMSP auth token available")
 	}
 	emspURL, _ = h.Store.GetEMSPCallbackURL()
 	if emspURL == "" {
@@ -188,5 +193,16 @@ func (h *Handler) resolveEMSPPushTarget() (tokenB, emspURL string, err error) {
 	if emspURL == "" {
 		return "", "", fmt.Errorf("no eMSP callback URL configured")
 	}
-	return tokenB, emspURL, nil
+	emspURL = normalizeCallbackURL(emspURL)
+	return authToken, emspURL, nil
+}
+
+// normalizeCallbackURL strips trailing "/versions" from the OCPI credentials
+// URL so it can be used as a base for receiver endpoint paths.
+func normalizeCallbackURL(u string) string {
+	u = strings.TrimRight(u, "/")
+	if strings.HasSuffix(u, "/versions") {
+		return strings.TrimSuffix(u, "/versions")
+	}
+	return u
 }

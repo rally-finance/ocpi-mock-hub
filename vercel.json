@@ -1,0 +1,13 @@
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/handler" }
+  ],
+  "functions": {
+    "api/handler.go": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    { "path": "/api/tick", "schedule": "0 * * * *" }
+  ]
+}

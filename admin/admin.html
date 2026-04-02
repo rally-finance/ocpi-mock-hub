@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCPI Mock Hub — Admin</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --orange: #d29922;
+  --yellow: #e3b341;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+nav .brand {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--accent);
+  padding: 12px 16px 12px 0;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 12px 14px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+nav a:hover { color: var(--text); }
+nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+.section { display: none; }
+.section.active { display: block; }
+
+h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat .label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat .value {
+  font-size: 14px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-orange { background: rgba(210,153,34,0.15); color: var(--orange); }
+.badge-blue { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+tr:hover td { background: rgba(88,166,255,0.04); }
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.form-group label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+input[type="text"]:focus, input[type="number"]:focus, select:focus { border-color: var(--accent); }
+
+input[type="number"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+button, .btn {
+  background: var(--accent);
+  color: #0d1117;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-danger { background: var(--red); }
+.btn-secondary { background: var(--border); color: var(--text); }
+
+.mode-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mode-buttons button {
+  padding: 6px 12px;
+  font-size: 11px;
+  background: var(--border);
+  color: var(--text);
+}
+
+.mode-buttons button.active {
+  background: var(--accent);
+  color: #0d1117;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  z-index: 1000;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+
+.toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.toast.success { border-color: var(--green); }
+.toast.error { border-color: var(--red); }
+
+.empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-muted);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.auto-refresh {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">OCPI Mock Hub</span>
+  <a href="#connection" class="nav-link active" data-section="connection">Connection</a>
+  <a href="#locations" class="nav-link" data-section="locations">Locations</a>
+  <a href="#sessions" class="nav-link" data-section="sessions">Sessions</a>
+  <a href="#cdrs" class="nav-link" data-section="cdrs">CDRs</a>
+  <a href="#log" class="nav-link" data-section="log">Request Log</a>
+</nav>
+
+<div class="container">
+
+  <!-- CONNECTION -->
+  <div id="connection" class="section active">
+    <h2>Connection Status</h2>
+
+    <div class="card" id="status-card">
+      <h3>Hub Identity & State</h3>
+      <div class="status-grid" id="status-grid"></div>
+    </div>
+
+    <div class="card">
+      <h3>Simulation Mode</h3>
+      <div class="mode-buttons" id="mode-buttons">
+        <button data-mode="happy">happy</button>
+        <button data-mode="slow">slow</button>
+        <button data-mode="reject">reject</button>
+        <button data-mode="partial">partial</button>
+        <button data-mode="pagination-stress">pagination-stress</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Initiate Handshake (Hub → eMSP)</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label>eMSP Versions URL</label>
+          <input type="text" id="emsp-url" placeholder="http://localhost:3000/api/ocpi/versions" />
+        </div>
+        <div class="form-group">
+          <label>eMSP Own Token</label>
+          <input type="text" id="emsp-token" placeholder="emsp-own-token" />
+        </div>
+        <button id="btn-handshake" onclick="initiateHandshake()">Handshake</button>
+      </div>
+      <div id="handshake-result" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Actions</h3>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-danger" onclick="resetConnection()">Reset Connection</button>
+        <button class="btn-secondary" onclick="triggerTick()">Trigger Tick</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Push Updates to eMSP</h3>
+      <div class="form-row">
+        <div class="form-group" style="min-width:130px;flex:0">
+          <label>Resource</label>
+          <select id="push-resource">
+            <option value="locations">Locations</option>
+            <option value="tariffs">Tariffs</option>
+          </select>
+        </div>
+        <div class="form-group" style="min-width:130px;flex:0">
+          <label>Pattern</label>
+          <select id="push-pattern">
+            <option value="burst">Burst</option>
+            <option value="staggered" selected>Staggered</option>
+            <option value="realistic">Realistic</option>
+          </select>
+        </div>
+        <div class="form-group" style="min-width:80px;flex:0">
+          <label>Count</label>
+          <input type="number" id="push-count" value="10" min="1" max="50" style="width:80px" />
+        </div>
+        <div class="form-group" style="min-width:auto;flex:0;justify-content:flex-end">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="push-mutate" checked /> Mutate
+          </label>
+        </div>
+        <div class="form-group" style="min-width:auto;flex:0;justify-content:flex-end">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="push-evse-only" /> EVSE only
+          </label>
+        </div>
+        <button id="btn-push" onclick="executePush()">Push</button>
+      </div>
+      <div id="push-summary" style="margin-top: 12px;"></div>
+      <div id="push-results" style="margin-top: 8px;"></div>
+    </div>
+  </div>
+
+  <!-- LOCATIONS -->
+  <div id="locations" class="section">
+    <h2>Locations</h2>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>CPO</th>
+              <th>Name</th>
+              <th>City</th>
+              <th>EVSEs</th>
+            </tr>
+          </thead>
+          <tbody id="locations-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SESSIONS -->
+  <div id="sessions" class="section">
+    <h2>Sessions</h2>
+    <div class="toolbar">
+      <span class="auto-refresh">Auto-refresh every 5s</span>
+      <button class="btn-secondary" onclick="triggerTick()">Trigger Tick</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Status</th>
+              <th>Location</th>
+              <th>kWh</th>
+              <th>Started</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- CDRs -->
+  <div id="cdrs" class="section">
+    <h2>CDRs</h2>
+    <div class="toolbar">
+      <span class="auto-refresh">Auto-refresh every 5s</span>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Session</th>
+              <th>Energy (kWh)</th>
+              <th>Cost</th>
+              <th>Duration (h)</th>
+              <th>Started</th>
+              <th>Ended</th>
+            </tr>
+          </thead>
+          <tbody id="cdrs-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- REQUEST LOG -->
+  <div id="log" class="section">
+    <h2>Request Log</h2>
+    <div class="toolbar">
+      <span class="auto-refresh">Last 100 requests (auto-refresh 5s)</span>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Path</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>From</th>
+              <th>To</th>
+            </tr>
+          </thead>
+          <tbody id="log-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+let refreshTimer = null;
+let currentSection = 'connection';
+
+// Navigation
+$$('.nav-link').forEach(link => {
+  link.addEventListener('click', e => {
+    e.preventDefault();
+    const section = link.dataset.section;
+    switchSection(section);
+  });
+});
+
+function switchSection(section) {
+  currentSection = section;
+  $$('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.section === section));
+  $$('.section').forEach(s => s.classList.toggle('active', s.id === section));
+  window.location.hash = section;
+  loadSection(section);
+  setupAutoRefresh(section);
+}
+
+function setupAutoRefresh(section) {
+  if (refreshTimer) clearInterval(refreshTimer);
+  if (['sessions', 'cdrs', 'log'].includes(section)) {
+    refreshTimer = setInterval(() => loadSection(section), 5000);
+  }
+}
+
+function loadSection(section) {
+  switch (section) {
+    case 'connection': loadStatus(); break;
+    case 'locations': loadLocations(); break;
+    case 'sessions': loadSessions(); break;
+    case 'cdrs': loadCDRs(); break;
+    case 'log': loadLog(); break;
+  }
+}
+
+// Status
+async function loadStatus() {
+  try {
+    const data = await api('/admin/status');
+    const grid = $('#status-grid');
+    grid.innerHTML = `
+      ${stat('Status', data.connected
+        ? '<span class="badge badge-green">Connected</span>'
+        : '<span class="badge badge-red">Disconnected</span>')}
+      ${stat('Hub Identity', data.hub_country + '*' + data.hub_party)}
+      ${stat('Token B', data.connected ? data.token_b_masked : '—')}
+      ${stat('eMSP Callback', data.emsp_callback_url || '—')}
+      ${stat('eMSP Versions', data.emsp_versions_url || '—')}
+      ${stat('eMSP Token', data.emsp_own_token_masked || '—')}
+      ${stat('Mode', '<span class="badge badge-blue">' + data.mode + '</span>')}
+      ${stat('Locations', data.seed_locations)}
+      ${stat('Tariffs', data.seed_tariffs)}
+      ${stat('CPOs', data.seed_cpos)}
+      ${stat('Sessions', data.session_count)}
+      ${stat('CDRs', data.cdr_count)}
+      ${stat('Tokens', data.token_count)}
+    `;
+
+    $$('#mode-buttons button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === data.mode);
+    });
+  } catch (e) {
+    console.error('loadStatus:', e);
+  }
+}
+
+function stat(label, value) {
+  return `<div class="stat"><span class="label">${label}</span><span class="value">${value}</span></div>`;
+}
+
+// Mode toggle
+$('#mode-buttons').addEventListener('click', async e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const mode = e.target.dataset.mode;
+  try {
+    await api('/admin/mode', { method: 'POST', body: JSON.stringify({ mode }) });
+    toast('Mode set to ' + mode, 'success');
+    loadStatus();
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  }
+});
+
+// Handshake
+async function initiateHandshake() {
+  const url = $('#emsp-url').value.trim();
+  const token = $('#emsp-token').value.trim();
+  if (!url || !token) {
+    toast('Both fields are required', 'error');
+    return;
+  }
+
+  const btn = $('#btn-handshake');
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  const result = $('#handshake-result');
+
+  try {
+    const data = await api('/admin/initiate-handshake', {
+      method: 'POST',
+      body: JSON.stringify({ emsp_versions_url: url, emsp_own_token: token })
+    });
+
+    if (data.success) {
+      result.innerHTML = `<span class="badge badge-green">Success</span> Token B: ${data.token_b || '—'} | Callback: ${data.callback_url || '—'}`;
+      toast('Handshake successful!', 'success');
+      loadStatus();
+    } else {
+      result.innerHTML = `<span class="badge badge-red">Failed</span> ${data.error || 'Unknown error'}`;
+      toast('Handshake failed: ' + (data.error || 'Unknown'), 'error');
+    }
+  } catch (e) {
+    result.innerHTML = `<span class="badge badge-red">Error</span> ${e.message}`;
+    toast('Handshake error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Handshake';
+  }
+}
+
+// Reset
+async function resetConnection() {
+  if (!confirm('Reset connection state? This clears Token B, eMSP credentials, and all stored data.')) return;
+  try {
+    await api('/admin/reset', { method: 'POST' });
+    toast('Connection reset', 'success');
+    loadStatus();
+  } catch (e) {
+    toast('Reset failed: ' + e.message, 'error');
+  }
+}
+
+// Trigger Tick
+async function triggerTick() {
+  try {
+    await api('/admin/trigger-tick', { method: 'POST' });
+    toast('Tick executed', 'success');
+    if (currentSection === 'sessions') loadSessions();
+    if (currentSection === 'cdrs') loadCDRs();
+    if (currentSection === 'connection') loadStatus();
+  } catch (e) {
+    toast('Tick failed: ' + e.message, 'error');
+  }
+}
+
+// Locations
+async function loadLocations() {
+  try {
+    const data = await api('/admin/locations');
+    const body = $('#locations-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No locations</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(l => `<tr>
+      <td style="font-weight:500">${l.id}</td>
+      <td>${l.country_code}*${l.party_id}</td>
+      <td>${l.name}</td>
+      <td>${l.city}</td>
+      <td>${l.evse_count}</td>
+    </tr>`).join('');
+  } catch (e) {
+    console.error('loadLocations:', e);
+  }
+}
+
+// Sessions
+async function loadSessions() {
+  try {
+    const data = await api('/admin/sessions');
+    const body = $('#sessions-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No sessions</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(s => {
+      const badge = s.status === 'ACTIVE' ? 'badge-green'
+        : s.status === 'PENDING' ? 'badge-orange'
+        : 'badge-blue';
+      return `<tr>
+        <td style="font-weight:500">${s.id}</td>
+        <td><span class="badge ${badge}">${s.status}</span></td>
+        <td>${s.location_id}</td>
+        <td>${s.kwh.toFixed(2)}</td>
+        <td>${fmtTime(s.start_date_time)}</td>
+        <td>${fmtTime(s.last_updated)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadSessions:', e);
+  }
+}
+
+// CDRs
+async function loadCDRs() {
+  try {
+    const data = await api('/admin/cdrs');
+    const body = $('#cdrs-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">No CDRs</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(c => {
+      const cost = c.total_cost;
+      const costStr = cost ? (typeof cost === 'object' ? `€${cost.incl_vat}` : `€${cost}`) : '—';
+      return `<tr>
+        <td style="font-weight:500">${c.id}</td>
+        <td>${c.session_id || '—'}</td>
+        <td>${c.total_energy ? c.total_energy.toFixed(2) : '—'}</td>
+        <td>${costStr}</td>
+        <td>${c.total_time ? c.total_time.toFixed(2) : '—'}</td>
+        <td>${fmtTime(c.start_date_time)}</td>
+        <td>${fmtTime(c.end_date_time)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadCDRs:', e);
+  }
+}
+
+// Request Log
+async function loadLog() {
+  try {
+    const data = await api('/admin/log');
+    const body = $('#log-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">No requests logged</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(e => {
+      const statusClass = e.status < 300 ? 'badge-green' : e.status < 500 ? 'badge-orange' : 'badge-red';
+      return `<tr>
+        <td>${fmtTime(e.timestamp)}</td>
+        <td><strong>${e.method}</strong></td>
+        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${e.path}</td>
+        <td><span class="badge ${statusClass}">${e.status}</span></td>
+        <td>${e.duration_ms}ms</td>
+        <td>${e.ocpi_from !== '*' ? e.ocpi_from : ''}</td>
+        <td>${e.ocpi_to !== '*' ? e.ocpi_to : ''}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadLog:', e);
+  }
+}
+
+// Helpers
+async function api(path, opts = {}) {
+  const resp = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts
+  });
+  return resp.json();
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      + ' ' + d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  } catch { return iso; }
+}
+
+function toast(msg, type = '') {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  setTimeout(() => el.className = 'toast', 3000);
+}
+
+// Push
+async function executePush() {
+  const resource = $('#push-resource').value;
+  const pattern = $('#push-pattern').value;
+  const count = parseInt($('#push-count').value) || 10;
+  const mutate = $('#push-mutate').checked;
+  const evseOnly = $('#push-evse-only').checked;
+
+  const btn = $('#btn-push');
+  btn.disabled = true;
+  btn.textContent = 'Pushing...';
+  const summary = $('#push-summary');
+  const results = $('#push-results');
+  summary.innerHTML = '';
+  results.innerHTML = '';
+
+  const endpoint = resource === 'tariffs' ? '/admin/push-tariffs' : '/admin/push-locations';
+  const body = { pattern, count, mutate, evse_only: evseOnly, min_delay_ms: 50, max_delay_ms: 500 };
+
+  try {
+    const data = await api(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+
+    if (data.error) {
+      summary.innerHTML = `<span class="badge badge-red">Error</span> ${data.error}`;
+    } else {
+      const dur = (data.duration_ms / 1000).toFixed(1);
+      summary.innerHTML = `Pushed <strong>${data.total}</strong> ${resource} in <strong>${dur}s</strong> — `
+        + `<span class="badge badge-green">${data.ok} OK</span> `
+        + (data.failed > 0 ? `<span class="badge badge-red">${data.failed} failed</span>` : '');
+
+      if (data.results && data.results.length) {
+        results.innerHTML = `<div class="table-wrap"><table>
+          <thead><tr><th>URL</th><th>Method</th><th>Status</th><th>Duration</th><th>Error</th></tr></thead>
+          <tbody>${data.results.map(r => {
+            const sc = r.error ? 'badge-red' : r.status_code < 300 ? 'badge-green' : 'badge-orange';
+            const urlShort = r.url.replace(/https?:\/\/[^/]+/, '');
+            return `<tr>
+              <td style="max-width:350px;overflow:hidden;text-overflow:ellipsis" title="${r.url}">${urlShort}</td>
+              <td>${r.method}</td>
+              <td><span class="badge ${sc}">${r.error ? 'ERR' : r.status_code}</span></td>
+              <td>${r.duration_ms}ms</td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;color:var(--red)">${r.error || ''}</td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`;
+      }
+    }
+    toast(`Pushed ${data.total || 0} ${resource}`, data.failed > 0 ? 'error' : 'success');
+  } catch (e) {
+    summary.innerHTML = `<span class="badge badge-red">Error</span> ${e.message}`;
+    toast('Push failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Push';
+  }
+}
+
+// Init
+const hash = window.location.hash.replace('#', '') || 'connection';
+if (['connection', 'locations', 'sessions', 'cdrs', 'log'].includes(hash)) {
+  switchSection(hash);
+} else {
+  switchSection('connection');
+}
+</script>
+
+</body>
+</html>

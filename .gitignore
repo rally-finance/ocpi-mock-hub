@@ -1,0 +1,4 @@
+.vercel
+*.exe
+*.test
+*.out

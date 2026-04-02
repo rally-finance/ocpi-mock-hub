@@ -2,7 +2,7 @@ package hub
 
 // Store abstracts state persistence with two backends:
 // - MemoryStore for standalone/local dev
-// - KVStore for Vercel deployment (Redis REST API)
+// - RedisStore for deployed environments (requires REDIS_URL)
 type Store interface {
 	// Handshake state
 	GetTokenB() (string, error)
@@ -36,9 +36,9 @@ type Store interface {
 	SetMode(mode string) error
 }
 
-func NewStore(cfg Config) Store {
-	if cfg.UseKV() {
-		return NewKVStore(cfg.KVRestAPIURL, cfg.KVRestAPIToken)
+func NewStore(cfg Config) (Store, error) {
+	if cfg.UseRedis() {
+		return NewRedisStore(cfg.RedisURL)
 	}
-	return NewMemoryStore()
+	return NewMemoryStore(), nil
 }

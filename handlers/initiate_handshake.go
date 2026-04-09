@@ -93,7 +93,7 @@ func (h *Handler) InitiateHandshake(w http.ResponseWriter, r *http.Request) {
 
 	credsBody := credentialsPayload{
 		Token:       tokenB,
-		URL:         scheme + "://" + host + "/ocpi/versions",
+		URL:         h.handshakeAdvertisedVersionsURL(scheme, host),
 		CountryCode: h.Config.HubCountry,
 		PartyID:     h.Config.HubParty,
 		BusinessDetails: &struct {
@@ -139,6 +139,13 @@ func (h *Handler) InitiateHandshake(w http.ResponseWriter, r *http.Request) {
 		TokenB:      tokenB,
 		CallbackURL: emspCreds.Data.URL,
 	})
+}
+
+func (h *Handler) handshakeAdvertisedVersionsURL(scheme, host string) string {
+	if h.Config.InitiateHandshakeVersionsURL != "" {
+		return h.Config.InitiateHandshakeVersionsURL
+	}
+	return scheme + "://" + host + "/ocpi/versions"
 }
 
 func (h *Handler) discoverVersion(versionsURL, token string) (string, error) {

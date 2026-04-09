@@ -20,13 +20,14 @@ func NewRouter(app *App) http.Handler {
 	r.Use(TokenAuthMiddleware(app))
 
 	h := handlers.New(handlers.HandlerConfig{
-		TokenA:           app.Config.TokenA,
-		HubCountry:       app.Config.HubCountry,
-		HubParty:         app.Config.HubParty,
-		EMSPCallbackURL: app.Config.EMSPCallbackURL,
-		EncodeBase64:     app.Config.EncodeBase64,
-		CommandDelayMS:   app.Config.CommandDelayMS,
-		SessionDurationS: app.Config.SessionDurationS,
+		TokenA:                       app.Config.TokenA,
+		HubCountry:                   app.Config.HubCountry,
+		HubParty:                     app.Config.HubParty,
+		InitiateHandshakeVersionsURL: app.Config.InitiateHandshakeVersionsURL,
+		EMSPCallbackURL:              app.Config.EMSPCallbackURL,
+		EncodeBase64:                 app.Config.EncodeBase64,
+		CommandDelayMS:               app.Config.CommandDelayMS,
+		SessionDurationS:             app.Config.SessionDurationS,
 	}, app.Store, app.Seed, reqLog)
 
 	// OCPI version discovery

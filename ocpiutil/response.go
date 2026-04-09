@@ -111,7 +111,10 @@ func BuildLinkHeader(r *http.Request, p Paging, returned, total int) http.Header
 			scheme = "http"
 		}
 	}
-	host := r.Header.Get("X-Forwarded-Host")
+	host := r.Header.Get("X-Rally-Forwarded-Host")
+	if host == "" {
+		host = r.Header.Get("X-Forwarded-Host")
+	}
 	if host == "" {
 		host = r.Host
 	}

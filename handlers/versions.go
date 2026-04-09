@@ -100,6 +100,9 @@ func resolveScheme(r *http.Request) string {
 }
 
 func resolveHost(r *http.Request) string {
+	if h := r.Header.Get("X-Rally-Forwarded-Host"); h != "" {
+		return h
+	}
 	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
 		return h
 	}

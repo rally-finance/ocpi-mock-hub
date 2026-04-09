@@ -6,32 +6,34 @@ import (
 )
 
 type Config struct {
-	Port              string
-	TokenA            string
-	HubCountry        string
-	HubParty          string
-	SessionDurationS  int
-	CommandDelayMS    int
-	EMSPCallbackURL  string
-	SeedLocations     int
-	EncodeBase64      bool
-	Mode              string
-	RedisURL          string
+	Port                         string
+	TokenA                       string
+	HubCountry                   string
+	HubParty                     string
+	InitiateHandshakeVersionsURL string
+	SessionDurationS             int
+	CommandDelayMS               int
+	EMSPCallbackURL              string
+	SeedLocations                int
+	EncodeBase64                 bool
+	Mode                         string
+	RedisURL                     string
 }
 
 func LoadConfig() Config {
 	return Config{
-		Port:              envOr("PORT", "4000"),
-		TokenA:            envOr("MOCK_TOKEN_A", "mock-token-a-secret"),
-		HubCountry:        envOr("MOCK_HUB_COUNTRY", "DE"),
-		HubParty:          envOr("MOCK_HUB_PARTY", "HUB"),
-		SessionDurationS:  envInt("MOCK_SESSION_DURATION_S", 60),
-		CommandDelayMS:    envInt("MOCK_COMMAND_DELAY_MS", 2000),
-		EMSPCallbackURL:  envOr("EMSP_CALLBACK_URL", "http://localhost:3000/api/ocpi"),
-		SeedLocations:     envInt("MOCK_SEED_LOCATIONS", 50),
-		EncodeBase64:      envOr("MOCK_ENCODE_BASE64", "false") == "true",
-		Mode:              envOr("MOCK_MODE", "happy"),
-		RedisURL:          os.Getenv("REDIS_URL"),
+		Port:                         envOr("PORT", "4000"),
+		TokenA:                       envOr("MOCK_TOKEN_A", "mock-token-a-secret"),
+		HubCountry:                   envOr("MOCK_HUB_COUNTRY", "DE"),
+		HubParty:                     envOr("MOCK_HUB_PARTY", "HUB"),
+		InitiateHandshakeVersionsURL: envOr("MOCK_INITIATE_HANDSHAKE_VERSIONS_URL", ""),
+		SessionDurationS:             envInt("MOCK_SESSION_DURATION_S", 60),
+		CommandDelayMS:               envInt("MOCK_COMMAND_DELAY_MS", 2000),
+		EMSPCallbackURL:              envOr("EMSP_CALLBACK_URL", "http://localhost:3000/api/ocpi"),
+		SeedLocations:                envInt("MOCK_SEED_LOCATIONS", 50),
+		EncodeBase64:                 envOr("MOCK_ENCODE_BASE64", "false") == "true",
+		Mode:                         envOr("MOCK_MODE", "happy"),
+		RedisURL:                     os.Getenv("REDIS_URL"),
 	}
 }
 

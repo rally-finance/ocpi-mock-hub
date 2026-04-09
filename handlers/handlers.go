@@ -13,13 +13,14 @@ type Handler struct {
 }
 
 type HandlerConfig struct {
-	TokenA           string
-	HubCountry       string
-	HubParty         string
-	EMSPCallbackURL string
-	EncodeBase64     bool
-	CommandDelayMS   int
-	SessionDurationS int
+	TokenA                       string
+	HubCountry                   string
+	HubParty                     string
+	InitiateHandshakeVersionsURL string
+	EMSPCallbackURL              string
+	EncodeBase64                 bool
+	CommandDelayMS               int
+	SessionDurationS             int
 }
 
 // Store is the subset of state handlers need.

@@ -36,6 +36,7 @@ In standalone mode, a background ticker handles this. On Vercel, a cron job (`/a
 | `MOCK_TOKEN_A` | `mock-token-a-secret` | Pre-shared Token A |
 | `MOCK_HUB_COUNTRY` | `DE` | Hub country code |
 | `MOCK_HUB_PARTY` | `HUB` | Hub party ID |
+| `MOCK_INITIATE_HANDSHAKE_VERSIONS_URL` | — | Optional URL advertised in outbound `POST /credentials` during admin-initiated handshake (defaults to inferred request host URL) |
 | `MOCK_SESSION_DURATION_S` | `60` | Session duration (seconds) |
 | `MOCK_COMMAND_DELAY_MS` | `2000` | Command callback delay (ms) |
 | `EMSP_CALLBACK_URL` | `http://localhost:3000/api/ocpi` | eMSP callback URL |

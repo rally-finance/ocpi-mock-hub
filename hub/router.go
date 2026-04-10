@@ -45,6 +45,9 @@ func NewRouter(app *App) http.Handler {
 	r.Get("/ocpi/2.2.1/sender/tariffs/{countryCode}/{partyID}/{tariffID}", h.GetTariff)
 	r.Get("/ocpi/2.2.1/sender/sessions", h.GetSessions)
 	r.Get("/ocpi/2.2.1/sender/cdrs", h.GetCDRs)
+	r.Get("/ocpi/2.2.1/sender/tokens", h.GetTokens)
+	r.Get("/ocpi/2.2.1/sender/tokens/{countryCode}/{partyID}/{uid}", h.GetTokenByID)
+	r.Post("/ocpi/2.2.1/sender/tokens/{countryCode}/{partyID}/{uid}/authorize", h.PostTokenAuthorize)
 	r.Get("/ocpi/2.2.1/sender/hubclientinfo", h.GetHubClientInfo)
 
 	// OCPI receiver modules (eMSP pushes data to hub)
@@ -68,6 +71,9 @@ func NewRouter(app *App) http.Handler {
 	r.Post("/admin/trigger-tick", h.TriggerTick)
 	r.Post("/admin/push-locations", h.PushLocations)
 	r.Post("/admin/push-tariffs", h.PushTariffs)
+	r.Get("/admin/tokens", h.GetAdminTokens)
+	r.Get("/admin/reservations", h.GetAdminReservations)
+	r.Post("/admin/authorize", h.AdminAuthorize)
 
 	// Admin HTML UI (embedded)
 	r.Get("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently).ServeHTTP)

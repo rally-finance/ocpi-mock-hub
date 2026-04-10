@@ -309,6 +309,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <a href="#locations" class="nav-link" data-section="locations">Locations</a>
   <a href="#sessions" class="nav-link" data-section="sessions">Sessions</a>
   <a href="#cdrs" class="nav-link" data-section="cdrs">CDRs</a>
+  <a href="#tokens" class="nav-link" data-section="tokens">Tokens</a>
+  <a href="#reservations" class="nav-link" data-section="reservations">Reservations</a>
   <a href="#log" class="nav-link" data-section="log">Request Log</a>
 </nav>
 
@@ -470,6 +472,56 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
   </div>
 
+  <!-- TOKENS -->
+  <div id="tokens" class="section">
+    <h2>Tokens</h2>
+    <div class="toolbar">
+      <span class="auto-refresh">Auto-refresh every 5s</span>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>UID</th>
+              <th>Country</th>
+              <th>Party</th>
+              <th>Type</th>
+              <th>Contract ID</th>
+              <th>Last Updated</th>
+            </tr>
+          </thead>
+          <tbody id="tokens-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESERVATIONS -->
+  <div id="reservations" class="section">
+    <h2>Reservations</h2>
+    <div class="toolbar">
+      <span class="auto-refresh">Auto-refresh every 5s</span>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Status</th>
+              <th>Location</th>
+              <th>EVSE</th>
+              <th>Expiry</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="reservations-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- REQUEST LOG -->
   <div id="log" class="section">
     <h2>Request Log</h2>
@@ -526,7 +578,7 @@ function switchSection(section) {
 
 function setupAutoRefresh(section) {
   if (refreshTimer) clearInterval(refreshTimer);
-  if (['sessions', 'cdrs', 'log'].includes(section)) {
+  if (['sessions', 'cdrs', 'tokens', 'reservations', 'log'].includes(section)) {
     refreshTimer = setInterval(() => loadSection(section), 5000);
   }
 }
@@ -537,6 +589,8 @@ function loadSection(section) {
     case 'locations': loadLocations(); break;
     case 'sessions': loadSessions(); break;
     case 'cdrs': loadCDRs(); break;
+    case 'tokens': loadTokens(); break;
+    case 'reservations': loadReservations(); break;
     case 'log': loadLog(); break;
   }
 }
@@ -562,6 +616,7 @@ async function loadStatus() {
       ${stat('Sessions', data.session_count)}
       ${stat('CDRs', data.cdr_count)}
       ${stat('Tokens', data.token_count)}
+      ${stat('Reservations', data.reservation_count)}
     `;
 
     $$('#mode-buttons button').forEach(btn => {
@@ -752,6 +807,53 @@ async function loadLog() {
   }
 }
 
+// Tokens
+async function loadTokens() {
+  try {
+    const data = await api('/admin/tokens');
+    const body = $('#tokens-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No tokens</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(t => `<tr>
+      <td style="font-weight:500">${t.uid || '—'}</td>
+      <td>${t.country_code || '—'}</td>
+      <td>${t.party_id || '—'}</td>
+      <td>${t.type || '—'}</td>
+      <td>${t.contract_id || '—'}</td>
+      <td>${fmtTime(t.last_updated)}</td>
+    </tr>`).join('');
+  } catch (e) {
+    console.error('loadTokens:', e);
+  }
+}
+
+// Reservations
+async function loadReservations() {
+  try {
+    const data = await api('/admin/reservations');
+    const body = $('#reservations-body');
+    if (!data.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No reservations</td></tr>';
+      return;
+    }
+    body.innerHTML = data.map(r => {
+      const badge = r.status === 'RESERVED' ? 'badge-green' : 'badge-blue';
+      return `<tr>
+        <td style="font-weight:500">${r.id}</td>
+        <td><span class="badge ${badge}">${r.status}</span></td>
+        <td>${r.location_id || '—'}</td>
+        <td>${r.evse_uid || '—'}</td>
+        <td>${fmtTime(r.expiry_date)}</td>
+        <td>${fmtTime(r._created_at)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadReservations:', e);
+  }
+}
+
 // Helpers
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
@@ -838,7 +940,7 @@ async function executePush() {
 
 // Init
 const hash = window.location.hash.replace('#', '') || 'connection';
-if (['connection', 'locations', 'sessions', 'cdrs', 'log'].includes(hash)) {
+if (['connection', 'locations', 'sessions', 'cdrs', 'tokens', 'reservations', 'log'].includes(hash)) {
   switchSection(hash);
 } else {
   switchSection('connection');

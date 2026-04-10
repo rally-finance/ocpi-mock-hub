@@ -14,22 +14,22 @@ func (h *Handler) GetSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to := ocpiutil.ParseDateRange(r)
+	raw = ocpiutil.FilterRawByLastUpdated(raw, from, to)
+
 	sessions := make([]json.RawMessage, 0, len(raw))
 	for _, b := range raw {
 		sessions = append(sessions, json.RawMessage(b))
 	}
 
 	p := ocpiutil.ParsePaging(r, 50)
+	total := len(sessions)
 	page := ocpiutil.PaginateSlice(sessions, p)
 
 	if page == nil {
 		page = sessions[:0]
 	}
 
-	var extra []http.Header
-	if link := ocpiutil.BuildLinkHeader(r, p, len(page), len(sessions)); link != nil {
-		extra = append(extra, link)
-	}
-
-	ocpiutil.OK(w, r, page, extra...)
+	headers := ocpiutil.BuildPagingHeaders(r, p, len(page), total)
+	ocpiutil.OK(w, r, page, headers)
 }

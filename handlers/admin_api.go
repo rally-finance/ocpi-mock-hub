@@ -10,21 +10,22 @@ import (
 )
 
 type connectionStatus struct {
-	Connected       bool   `json:"connected"`
-	TokenB          string `json:"token_b"`
-	TokenBMasked    string `json:"token_b_masked"`
-	EMSPCallbackURL string `json:"emsp_callback_url"`
-	EMSPVersionsURL string `json:"emsp_versions_url"`
-	EMSPOwnToken   string `json:"emsp_own_token_masked"`
-	HubCountry      string `json:"hub_country"`
-	HubParty        string `json:"hub_party"`
-	Mode            string `json:"mode"`
-	SeedLocations   int    `json:"seed_locations"`
-	SeedTariffs     int    `json:"seed_tariffs"`
-	SeedCPOs        int    `json:"seed_cpos"`
-	SessionCount    int    `json:"session_count"`
-	CDRCount        int    `json:"cdr_count"`
-	TokenCount      int    `json:"token_count"`
+	Connected        bool   `json:"connected"`
+	TokenB           string `json:"token_b"`
+	TokenBMasked     string `json:"token_b_masked"`
+	EMSPCallbackURL  string `json:"emsp_callback_url"`
+	EMSPVersionsURL  string `json:"emsp_versions_url"`
+	EMSPOwnToken     string `json:"emsp_own_token_masked"`
+	HubCountry       string `json:"hub_country"`
+	HubParty         string `json:"hub_party"`
+	Mode             string `json:"mode"`
+	SeedLocations    int    `json:"seed_locations"`
+	SeedTariffs      int    `json:"seed_tariffs"`
+	SeedCPOs         int    `json:"seed_cpos"`
+	SessionCount     int    `json:"session_count"`
+	CDRCount         int    `json:"cdr_count"`
+	TokenCount       int    `json:"token_count"`
+	ReservationCount int    `json:"reservation_count"`
 }
 
 func maskToken(t string) string {
@@ -43,14 +44,15 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	sessions, _ := h.Store.ListSessions()
 	cdrs, _ := h.Store.ListCDRs()
 	tokens, _ := h.Store.ListTokens()
+	reservations, _ := h.Store.ListReservations()
 
 	status := connectionStatus{
 		Connected:        tokenB != "",
 		TokenB:           tokenB,
 		TokenBMasked:     maskToken(tokenB),
-		EMSPCallbackURL: callbackURL,
-		EMSPVersionsURL: versionsURL,
-		EMSPOwnToken:    maskToken(emspOwnToken),
+		EMSPCallbackURL:  callbackURL,
+		EMSPVersionsURL:  versionsURL,
+		EMSPOwnToken:     maskToken(emspOwnToken),
 		HubCountry:       h.Config.HubCountry,
 		HubParty:         h.Config.HubParty,
 		Mode:             mode,
@@ -60,6 +62,7 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		SessionCount:     len(sessions),
 		CDRCount:         len(cdrs),
 		TokenCount:       len(tokens),
+		ReservationCount: len(reservations),
 	}
 
 	writeJSON(w, http.StatusOK, status)
@@ -105,6 +108,73 @@ func (h *Handler) GetAdminLocations(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, locs)
+}
+
+func (h *Handler) GetAdminTokens(w http.ResponseWriter, r *http.Request) {
+	raw, _ := h.Store.ListTokens()
+	tokens := make([]json.RawMessage, 0, len(raw))
+	for _, b := range raw {
+		tokens = append(tokens, json.RawMessage(b))
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (h *Handler) GetAdminReservations(w http.ResponseWriter, r *http.Request) {
+	raw, _ := h.Store.ListReservations()
+	reservations := make([]json.RawMessage, 0, len(raw))
+	for _, b := range raw {
+		reservations = append(reservations, json.RawMessage(b))
+	}
+	writeJSON(w, http.StatusOK, reservations)
+}
+
+func (h *Handler) AdminAuthorize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CountryCode string `json:"country_code"`
+		PartyID     string `json:"party_id"`
+		UID         string `json:"uid"`
+		LocationID  string `json:"location_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	mode, _ := h.Store.GetMode()
+	if mode == "reject" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"allowed": "NOT_ALLOWED",
+			"token":   map[string]string{"country_code": req.CountryCode, "party_id": req.PartyID, "uid": req.UID},
+		})
+		return
+	}
+
+	raw, _ := h.Store.GetToken(req.CountryCode, req.PartyID, req.UID)
+	if raw == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"allowed": "NOT_ALLOWED",
+			"token":   map[string]string{"country_code": req.CountryCode, "party_id": req.PartyID, "uid": req.UID},
+		})
+		return
+	}
+
+	result := map[string]any{
+		"allowed": "ALLOWED",
+		"token":   map[string]string{"country_code": req.CountryCode, "party_id": req.PartyID, "uid": req.UID},
+	}
+
+	if req.LocationID != "" {
+		loc := h.Seed.LocationByID(req.LocationID)
+		if loc != nil && len(loc.EVSEs) > 0 {
+			evseUIDs := make([]string, 0, len(loc.EVSEs))
+			for _, e := range loc.EVSEs {
+				evseUIDs = append(evseUIDs, e.UID)
+			}
+			result["location"] = map[string]any{"evse_uids": evseUIDs}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) ResetConnection(w http.ResponseWriter, r *http.Request) {

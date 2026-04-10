@@ -92,35 +92,103 @@ func ParsePaging(r *http.Request, defaultLimit int) Paging {
 	return Paging{Offset: offset, Limit: limit}
 }
 
-func BuildLinkHeader(r *http.Request, p Paging, returned, total int) http.Header {
-	if returned < p.Limit || p.Offset+returned >= total {
-		return nil
-	}
-	nextOffset := p.Offset + p.Limit
-	u := *r.URL
-	q := u.Query()
-	q.Set("offset", strconv.Itoa(nextOffset))
-	q.Set("limit", strconv.Itoa(p.Limit))
-	u.RawQuery = q.Encode()
+func BuildPagingHeaders(r *http.Request, p Paging, returned, total int) http.Header {
+	h := http.Header{}
+	h.Set("X-Total-Count", strconv.Itoa(total))
+	h.Set("X-Limit", strconv.Itoa(p.Limit))
 
-	scheme := "https"
-	if r.TLS == nil {
-		if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
-			scheme = fwd
-		} else {
-			scheme = "http"
+	if returned >= p.Limit && p.Offset+returned < total {
+		nextOffset := p.Offset + p.Limit
+		u := *r.URL
+		q := u.Query()
+		q.Set("offset", strconv.Itoa(nextOffset))
+		q.Set("limit", strconv.Itoa(p.Limit))
+		u.RawQuery = q.Encode()
+
+		scheme := "https"
+		if r.TLS == nil {
+			if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+				scheme = fwd
+			} else {
+				scheme = "http"
+			}
+		}
+		host := r.Header.Get("X-Rally-Forwarded-Host")
+		if host == "" {
+			host = r.Header.Get("X-Forwarded-Host")
+		}
+		if host == "" {
+			host = r.Host
+		}
+
+		link := fmt.Sprintf("<%s://%s%s>; rel=\"next\"", scheme, host, u.RequestURI())
+		h.Set("Link", link)
+	}
+
+	return h
+}
+
+func ParseDateRange(r *http.Request) (from, to *time.Time) {
+	if v := r.URL.Query().Get("date_from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			from = &t
 		}
 	}
-	host := r.Header.Get("X-Rally-Forwarded-Host")
-	if host == "" {
-		host = r.Header.Get("X-Forwarded-Host")
+	if v := r.URL.Query().Get("date_to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			to = &t
+		}
 	}
-	if host == "" {
-		host = r.Host
-	}
+	return
+}
 
-	link := fmt.Sprintf("<%s://%s%s>; rel=\"next\"", scheme, host, u.RequestURI())
-	return http.Header{"Link": {link}}
+func FilterByLastUpdated[T any](items []T, getLastUpdated func(T) string, from, to *time.Time) []T {
+	if from == nil && to == nil {
+		return items
+	}
+	result := make([]T, 0, len(items))
+	for _, item := range items {
+		t, err := time.Parse(time.RFC3339, getLastUpdated(item))
+		if err != nil {
+			continue
+		}
+		if from != nil && t.Before(*from) {
+			continue
+		}
+		if to != nil && !t.Before(*to) {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func FilterRawByLastUpdated(items [][]byte, from, to *time.Time) [][]byte {
+	if from == nil && to == nil {
+		return items
+	}
+	type ts struct {
+		LastUpdated string `json:"last_updated"`
+	}
+	result := make([][]byte, 0, len(items))
+	for _, b := range items {
+		var v ts
+		if err := json.Unmarshal(b, &v); err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, v.LastUpdated)
+		if err != nil {
+			continue
+		}
+		if from != nil && t.Before(*from) {
+			continue
+		}
+		if to != nil && !t.Before(*to) {
+			continue
+		}
+		result = append(result, b)
+	}
+	return result
 }
 
 func PaginateSlice[T any](items []T, p Paging) []T {

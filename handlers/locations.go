@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
@@ -18,19 +19,19 @@ func (h *Handler) GetLocations(w http.ResponseWriter, r *http.Request) {
 		locations = h.Seed.LocationsByParty(toCountry, toParty)
 	}
 
+	from, to := ocpiutil.ParseDateRange(r)
+	locations = ocpiutil.FilterByLastUpdated(locations, func(l fakegen.Location) string { return l.LastUpdated }, from, to)
+
 	p := ocpiutil.ParsePaging(r, 50)
+	total := len(locations)
 	page := ocpiutil.PaginateSlice(locations, p)
 
 	if page == nil {
-		page = h.Seed.Locations[:0]
+		page = locations[:0]
 	}
 
-	var extra []http.Header
-	if link := ocpiutil.BuildLinkHeader(r, p, len(page), len(locations)); link != nil {
-		extra = append(extra, link)
-	}
-
-	ocpiutil.OK(w, r, page, extra...)
+	headers := ocpiutil.BuildPagingHeaders(r, p, len(page), total)
+	ocpiutil.OK(w, r, page, headers)
 }
 
 func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {

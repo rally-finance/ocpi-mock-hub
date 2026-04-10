@@ -7,5 +7,16 @@ import (
 )
 
 func (h *Handler) GetHubClientInfo(w http.ResponseWriter, r *http.Request) {
-	ocpiutil.OK(w, r, h.Seed.HubClientInfo)
+	items := h.Seed.HubClientInfo
+
+	p := ocpiutil.ParsePaging(r, 50)
+	total := len(items)
+	page := ocpiutil.PaginateSlice(items, p)
+
+	if page == nil {
+		page = items[:0]
+	}
+
+	headers := ocpiutil.BuildPagingHeaders(r, p, len(page), total)
+	ocpiutil.OK(w, r, page, headers)
 }

@@ -14,22 +14,22 @@ func (h *Handler) GetCDRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to := ocpiutil.ParseDateRange(r)
+	raw = ocpiutil.FilterRawByLastUpdated(raw, from, to)
+
 	cdrs := make([]json.RawMessage, 0, len(raw))
 	for _, b := range raw {
 		cdrs = append(cdrs, json.RawMessage(b))
 	}
 
 	p := ocpiutil.ParsePaging(r, 50)
+	total := len(cdrs)
 	page := ocpiutil.PaginateSlice(cdrs, p)
 
 	if page == nil {
 		page = cdrs[:0]
 	}
 
-	var extra []http.Header
-	if link := ocpiutil.BuildLinkHeader(r, p, len(page), len(cdrs)); link != nil {
-		extra = append(extra, link)
-	}
-
-	ocpiutil.OK(w, r, page, extra...)
+	headers := ocpiutil.BuildPagingHeaders(r, p, len(page), total)
+	ocpiutil.OK(w, r, page, headers)
 }

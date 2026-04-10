@@ -76,8 +76,12 @@ func (s *handshakeTestStore) ListCDRs() ([][]byte, error) {
 	}
 	return out, nil
 }
-func (s *handshakeTestStore) GetMode() (string, error)  { return s.mode, nil }
-func (s *handshakeTestStore) SetMode(mode string) error { s.mode = mode; return nil }
+func (s *handshakeTestStore) PutReservation(id string, data []byte) error { return nil }
+func (s *handshakeTestStore) GetReservation(id string) ([]byte, error)    { return nil, nil }
+func (s *handshakeTestStore) ListReservations() ([][]byte, error)         { return nil, nil }
+func (s *handshakeTestStore) DeleteReservation(id string) error           { return nil }
+func (s *handshakeTestStore) GetMode() (string, error)                    { return s.mode, nil }
+func (s *handshakeTestStore) SetMode(mode string) error                   { s.mode = mode; return nil }
 
 func TestInitiateHandshakePostsConfiguredVersionsURLWhenSet(t *testing.T) {
 	const expectedVersionsURL = "https://ocpi-mock.ingress.getrally.com/ocpi/versions"

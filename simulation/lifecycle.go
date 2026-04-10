@@ -24,6 +24,9 @@ type Store interface {
 	ListSessions() ([][]byte, error)
 	DeleteSession(id string) error
 	PutCDR(id string, cdr []byte) error
+	PutReservation(id string, reservation []byte) error
+	ListReservations() ([][]byte, error)
+	DeleteReservation(id string) error
 	GetMode() (string, error)
 }
 
@@ -124,7 +127,52 @@ func (s *Simulator) Tick() error {
 		}
 	}
 
+	s.processReservations(now)
+
 	return nil
+}
+
+type reservationRecord struct {
+	ID           string `json:"id"`
+	ExpiryDate   string `json:"expiry_date"`
+	Status       string `json:"status"`
+	ResponseURL  string `json:"_response_url,omitempty"`
+	CreatedAt    string `json:"_created_at,omitempty"`
+	CallbackSent bool   `json:"_callback_sent,omitempty"`
+}
+
+func (s *Simulator) processReservations(now time.Time) {
+	raw, err := s.store.ListReservations()
+	if err != nil {
+		log.Printf("[tick] list reservations: %v", err)
+		return
+	}
+
+	for _, b := range raw {
+		var res reservationRecord
+		if err := json.Unmarshal(b, &res); err != nil {
+			continue
+		}
+
+		if res.ResponseURL != "" && !res.CallbackSent {
+			created, _ := time.Parse(time.RFC3339, res.CreatedAt)
+			if now.Sub(created) > time.Duration(s.commandDelayMS)*time.Millisecond {
+				callback := map[string]any{"result": "ACCEPTED"}
+				s.pushToEMSP("POST", res.ResponseURL, callback)
+				res.CallbackSent = true
+				data, _ := json.Marshal(res)
+				s.store.PutReservation(res.ID, data)
+			}
+		}
+
+		if res.ExpiryDate != "" {
+			expiry, err := time.Parse(time.RFC3339, res.ExpiryDate)
+			if err == nil && now.After(expiry) {
+				s.store.DeleteReservation(res.ID)
+				log.Printf("[tick] reservation %s expired, deleted", res.ID)
+			}
+		}
+	}
 }
 
 func (s *Simulator) advancePendingToActive(session *sessionRecord, emspURL string, now time.Time) {

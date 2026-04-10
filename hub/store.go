@@ -31,6 +31,12 @@ type Store interface {
 	PutCDR(id string, cdr []byte) error
 	ListCDRs() ([][]byte, error)
 
+	// Reservations (created by RESERVE_NOW, expired by tick)
+	PutReservation(id string, reservation []byte) error
+	GetReservation(id string) ([]byte, error)
+	ListReservations() ([][]byte, error)
+	DeleteReservation(id string) error
+
 	// Simulation mode
 	GetMode() (string, error)
 	SetMode(mode string) error

@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// faultMiddlewareHandler wraps a dummy inner handler with FaultModeMiddleware
-// and returns the recorded response. The inner handler writes a 200 + JSON body
-// so we can distinguish "passed through" from "short-circuited".
+// faultMiddlewareHandler wraps a dummy inner handler with FaultModeMiddleware.
+// The inner handler writes 200 + JSON so we can distinguish pass-through from short-circuit.
 func faultMiddlewareHandler(h *Handler) http.Handler {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -21,6 +20,8 @@ func faultMiddlewareHandler(h *Handler) http.Handler {
 	})
 	return FaultModeMiddleware(h)(inner)
 }
+
+const faultTestOCPIPath = "/ocpi/2.2.1/sender/sessions"
 
 func TestPaginationStressMode_ForcesLimit1(t *testing.T) {
 	h := testHandler()
@@ -72,7 +73,7 @@ func TestRateLimitMode_Returns429(t *testing.T) {
 	got200 := false
 	for i := 0; i < 50; i++ {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+		mw.ServeHTTP(w, httptest.NewRequest("GET", faultTestOCPIPath, nil))
 
 		if w.Code == http.StatusOK {
 			got200 = true
@@ -106,7 +107,7 @@ func TestRandom500Mode_ReturnsErrors(t *testing.T) {
 	gotOK := false
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
-		mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+		mw.ServeHTTP(w, httptest.NewRequest("GET", faultTestOCPIPath, nil))
 
 		if w.Code == http.StatusOK {
 			gotOK = true
@@ -176,7 +177,7 @@ func TestSlowMode_AddsDelay(t *testing.T) {
 
 	start := time.Now()
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	mw.ServeHTTP(w, httptest.NewRequest("GET", faultTestOCPIPath, nil))
 	elapsed := time.Since(start)
 
 	if w.Code != http.StatusOK {
@@ -236,10 +237,35 @@ func TestHappyMode_PassesThrough(t *testing.T) {
 	mw := faultMiddlewareHandler(h)
 
 	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	mw.ServeHTTP(w, httptest.NewRequest("GET", faultTestOCPIPath, nil))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("happy mode should pass through, got %d", w.Code)
+	}
+}
+
+func TestFaultMiddleware_SkipsNonOCPIPaths(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+	mw := faultMiddlewareHandler(h)
+
+	nonOCPIPaths := []string{"/admin/mode", "/admin/status", "/api/tick", "/", "/ocpi/versions", "/ocpi/2.2.1/credentials"}
+
+	for _, mode := range []string{"slow", "partial", "rate-limit", "random-500"} {
+		store.mode = mode
+		for _, path := range nonOCPIPaths {
+			w := httptest.NewRecorder()
+			start := time.Now()
+			mw.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+			elapsed := time.Since(start)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("mode=%s path=%s: expected 200, got %d", mode, path, w.Code)
+			}
+			if elapsed > 1*time.Second {
+				t.Errorf("mode=%s path=%s: took %v, expected no delay for non-OCPI path", mode, path, elapsed)
+			}
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
@@ -38,10 +39,17 @@ func wrapPartialWriter(w http.ResponseWriter) *partialWriter {
 	return &partialWriter{ResponseWriter: w}
 }
 
-// FaultModeMiddleware applies fault mode effects to OCPI endpoints.
+// FaultModeMiddleware applies fault mode effects to OCPI sender/receiver endpoints only.
+// Admin, credentials, version discovery, health, and tick routes are unaffected.
 func FaultModeMiddleware(h *Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := r.URL.Path
+			if !(strings.HasPrefix(p, "/ocpi/2.2.1/sender/") || strings.HasPrefix(p, "/ocpi/2.2.1/receiver/")) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			mode, _ := h.Store.GetMode()
 
 			switch mode {

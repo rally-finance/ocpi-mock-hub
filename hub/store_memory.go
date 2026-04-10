@@ -12,15 +12,17 @@ type MemoryStore struct {
 	tokens           map[string][]byte // key: "cc/pid/uid"
 	sessions         map[string][]byte // key: session ID
 	cdrs             map[string][]byte // key: CDR ID
+	reservations     map[string][]byte // key: reservation ID
 	mode             string
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		tokens:   make(map[string][]byte),
-		sessions: make(map[string][]byte),
-		cdrs:     make(map[string][]byte),
-		mode:     "happy",
+		tokens:       make(map[string][]byte),
+		sessions:     make(map[string][]byte),
+		cdrs:         make(map[string][]byte),
+		reservations: make(map[string][]byte),
+		mode:         "happy",
 	}
 }
 
@@ -161,6 +163,36 @@ func (m *MemoryStore) ListCDRs() ([][]byte, error) {
 		result = append(result, v)
 	}
 	return result, nil
+}
+
+func (m *MemoryStore) PutReservation(id string, reservation []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reservations[id] = reservation
+	return nil
+}
+
+func (m *MemoryStore) GetReservation(id string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reservations[id], nil
+}
+
+func (m *MemoryStore) ListReservations() ([][]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([][]byte, 0, len(m.reservations))
+	for _, v := range m.reservations {
+		result = append(result, v)
+	}
+	return result, nil
+}
+
+func (m *MemoryStore) DeleteReservation(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.reservations, id)
+	return nil
 }
 
 func (m *MemoryStore) GetMode() (string, error) {

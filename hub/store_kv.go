@@ -166,6 +166,26 @@ func (r *RedisStore) ListCDRs() ([][]byte, error) {
 	return r.listByPrefix("cdr:*")
 }
 
+func (r *RedisStore) PutReservation(id string, reservation []byte) error {
+	return r.set("reservation:"+id, string(reservation))
+}
+
+func (r *RedisStore) GetReservation(id string) ([]byte, error) {
+	v, err := r.get("reservation:" + id)
+	if v == "" {
+		return nil, err
+	}
+	return []byte(v), err
+}
+
+func (r *RedisStore) ListReservations() ([][]byte, error) {
+	return r.listByPrefix("reservation:*")
+}
+
+func (r *RedisStore) DeleteReservation(id string) error {
+	return r.del("reservation:" + id)
+}
+
 func (r *RedisStore) GetMode() (string, error) {
 	v, err := r.get("config:mode")
 	if v == "" {

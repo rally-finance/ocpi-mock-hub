@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,47 @@ type startSessionPayload struct {
 type stopSessionPayload struct {
 	ResponseURL string `json:"response_url,omitempty"`
 	SessionID   string `json:"session_id,omitempty"`
+}
+
+type reserveNowPayload struct {
+	ResponseURL   string `json:"response_url"`
+	ReservationID string `json:"reservation_id"`
+	LocationID    string `json:"location_id"`
+	EvseUID       string `json:"evse_uid,omitempty"`
+	ExpiryDate    string `json:"expiry_date"`
+	Token         struct {
+		CountryCode string `json:"country_code,omitempty"`
+		PartyID     string `json:"party_id,omitempty"`
+		UID         string `json:"uid"`
+		Type        string `json:"type,omitempty"`
+		ContractID  string `json:"contract_id,omitempty"`
+	} `json:"token"`
+}
+
+type cancelReservationPayload struct {
+	ResponseURL   string `json:"response_url,omitempty"`
+	ReservationID string `json:"reservation_id"`
+}
+
+type unlockConnectorPayload struct {
+	ResponseURL string `json:"response_url"`
+	LocationID  string `json:"location_id"`
+	EvseUID     string `json:"evse_uid"`
+	ConnectorID string `json:"connector_id"`
+}
+
+// ReservationRecord is the JSON stored in KV for a reservation.
+type ReservationRecord struct {
+	ID           string `json:"id"`
+	LocationID   string `json:"location_id"`
+	EvseUID      string `json:"evse_uid"`
+	ExpiryDate   string `json:"expiry_date"`
+	Status       string `json:"status"`
+	TokenUID     string `json:"token_uid"`
+	LastUpdated  string `json:"last_updated"`
+	ResponseURL  string `json:"_response_url,omitempty"`
+	CreatedAt    string `json:"_created_at,omitempty"`
+	CallbackSent bool   `json:"_callback_sent,omitempty"`
 }
 
 // SessionRecord is the JSON stored in KV for a session.
@@ -72,6 +114,12 @@ func (h *Handler) PostCommand(w http.ResponseWriter, r *http.Request) {
 		h.handleStartSession(w, r, mode)
 	case "STOP_SESSION":
 		h.handleStopSession(w, r, mode)
+	case "RESERVE_NOW":
+		h.handleReserveNow(w, r, mode)
+	case "CANCEL_RESERVATION":
+		h.handleCancelReservation(w, r, mode)
+	case "UNLOCK_CONNECTOR":
+		h.handleUnlockConnector(w, r, mode)
 	default:
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams,
 			fmt.Sprintf("Unknown command: %s", command))
@@ -186,4 +234,133 @@ func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode
 	ocpiutil.OK(w, r, map[string]string{
 		"result": "ACCEPTED",
 	})
+}
+
+func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, mode string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
+		return
+	}
+
+	var payload reserveNowPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Invalid JSON")
+		return
+	}
+
+	if mode == "reject" {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
+	}
+
+	loc := h.Seed.LocationByID(payload.LocationID)
+	if loc == nil {
+		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject,
+			fmt.Sprintf("Location %s not found", payload.LocationID))
+		return
+	}
+
+	evseUID := payload.EvseUID
+	if evseUID == "" && len(loc.EVSEs) > 0 {
+		evseUID = loc.EVSEs[0].UID
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	resID := payload.ReservationID
+	if resID == "" {
+		resID = "RES-" + uuid.NewString()[:8]
+	}
+
+	reservation := ReservationRecord{
+		ID:          resID,
+		LocationID:  loc.ID,
+		EvseUID:     evseUID,
+		ExpiryDate:  payload.ExpiryDate,
+		Status:      "RESERVED",
+		TokenUID:    payload.Token.UID,
+		LastUpdated: now,
+		ResponseURL: payload.ResponseURL,
+		CreatedAt:   now,
+	}
+
+	data, _ := json.Marshal(reservation)
+	h.Store.PutReservation(resID, data)
+
+	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
+}
+
+func (h *Handler) handleCancelReservation(w http.ResponseWriter, r *http.Request, mode string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
+		return
+	}
+
+	var payload cancelReservationPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Invalid JSON")
+		return
+	}
+
+	if mode == "reject" {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
+	}
+
+	raw, _ := h.Store.GetReservation(payload.ReservationID)
+	if raw == nil {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
+	}
+
+	h.Store.DeleteReservation(payload.ReservationID)
+	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
+}
+
+func (h *Handler) handleUnlockConnector(w http.ResponseWriter, r *http.Request, mode string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
+		return
+	}
+
+	var payload unlockConnectorPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Invalid JSON")
+		return
+	}
+
+	if mode == "reject" {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
+	}
+
+	loc := h.Seed.LocationByID(payload.LocationID)
+	if loc == nil {
+		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject,
+			fmt.Sprintf("Location %s not found", payload.LocationID))
+		return
+	}
+
+	if payload.ResponseURL != "" {
+		go func() {
+			callback := map[string]any{"result": "ACCEPTED"}
+			cbData, _ := json.Marshal(callback)
+			req, err := http.NewRequest("POST", payload.ResponseURL, bytes.NewReader(cbData))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if token, _ := h.Store.GetEMSPOwnToken(); token != "" {
+				req.Header.Set("Authorization", "Token "+token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				resp.Body.Close()
+			}
+		}()
+	}
+
+	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }

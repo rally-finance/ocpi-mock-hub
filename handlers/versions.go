@@ -41,6 +41,7 @@ func (h *Handler) GetVersionDetails(w http.ResponseWriter, r *http.Request) {
 			{"identifier": "tariffs", "role": "SENDER", "url": base + "/sender/tariffs"},
 			{"identifier": "sessions", "role": "SENDER", "url": base + "/sender/sessions"},
 			{"identifier": "cdrs", "role": "SENDER", "url": base + "/sender/cdrs"},
+			{"identifier": "tokens", "role": "SENDER", "url": base + "/sender/tokens"},
 			{"identifier": "tokens", "role": "RECEIVER", "url": base + "/receiver/tokens"},
 			{"identifier": "commands", "role": "RECEIVER", "url": base + "/receiver/commands"},
 			{"identifier": "hubclientinfo", "role": "SENDER", "url": base + "/sender/hubclientinfo"},

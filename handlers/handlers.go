@@ -44,6 +44,10 @@ type Store interface {
 	DeleteSession(id string) error
 	PutCDR(id string, cdr []byte) error
 	ListCDRs() ([][]byte, error)
+	PutReservation(id string, reservation []byte) error
+	GetReservation(id string) ([]byte, error)
+	ListReservations() ([][]byte, error)
+	DeleteReservation(id string) error
 	GetMode() (string, error)
 	SetMode(mode string) error
 }

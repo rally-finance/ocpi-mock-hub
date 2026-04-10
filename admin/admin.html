@@ -804,11 +804,11 @@ function renderLogRows(entries) {
     return `<tr>
       <td>${fmtTime(e.timestamp)}</td>
       <td><strong>${e.method}</strong></td>
-      <td title="${e.path}" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.path}</td>
+      <td title="${esc(e.path)}" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.path)}</td>
       <td><span class="badge ${statusClass}">${e.status}</span></td>
       <td>${e.duration_ms}ms</td>
-      <td>${e.ocpi_from !== '*' ? e.ocpi_from : ''}</td>
-      <td>${e.ocpi_to !== '*' ? e.ocpi_to : ''}</td>
+      <td>${e.ocpi_from !== '*' ? esc(e.ocpi_from) : ''}</td>
+      <td>${e.ocpi_to !== '*' ? esc(e.ocpi_to) : ''}</td>
     </tr>`;
   }).join('');
 }
@@ -889,6 +889,12 @@ async function api(path, opts = {}) {
     ...opts
   });
   return resp.json();
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
 
 function fmtTime(iso) {

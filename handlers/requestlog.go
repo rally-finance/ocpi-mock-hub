@@ -7,7 +7,13 @@ import (
 	"time"
 )
 
-const maxLogEntries = 100
+const maxLogEntries = 500
+
+var ignoredPaths = map[string]bool{
+	"/":            true,
+	"/favicon.ico": true,
+	"/robots.txt":  true,
+}
 
 type RequestLogEntry struct {
 	Timestamp  string `json:"timestamp"`
@@ -76,7 +82,7 @@ func (sc *statusCapture) WriteHeader(code int) {
 func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/admin") {
+			if strings.HasPrefix(r.URL.Path, "/admin") || ignoredPaths[r.URL.Path] {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -86,10 +92,15 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(sc, r)
 
+			path := r.URL.Path
+			if r.URL.RawQuery != "" {
+				path += "?" + r.URL.RawQuery
+			}
+
 			rl.Add(RequestLogEntry{
 				Timestamp:  start.UTC().Format(time.RFC3339),
 				Method:     r.Method,
-				Path:       r.URL.Path,
+				Path:       path,
 				Status:     sc.status,
 				DurationMS: time.Since(start).Milliseconds(),
 				OCPIFrom:   r.Header.Get("OCPI-from-country-code") + "*" + r.Header.Get("OCPI-from-party-id"),

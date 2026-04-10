@@ -152,6 +152,27 @@ func TestOCPIFromHeaders_SetOnOCPIResponse(t *testing.T) {
 	}
 }
 
+func TestOCPIFromHeaders_PresentOnAuthError(t *testing.T) {
+	app := testApp()
+	router := NewRouter(app)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/locations", nil)
+	r.Header.Set("Authorization", "Token bad-token")
+
+	router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+	if cc := w.Header().Get("OCPI-From-Country-Code"); cc != "DE" {
+		t.Errorf("OCPI-From-Country-Code on 401: got %q, want %q", cc, "DE")
+	}
+	if pid := w.Header().Get("OCPI-From-Party-Id"); pid != "HUB" {
+		t.Errorf("OCPI-From-Party-Id on 401: got %q, want %q", pid, "HUB")
+	}
+}
+
 func TestOCPIFromHeaders_NotSetOnAdminResponse(t *testing.T) {
 	app := testApp()
 	router := NewRouter(app)

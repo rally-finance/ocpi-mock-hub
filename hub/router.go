@@ -18,8 +18,8 @@ func NewRouter(app *App) http.Handler {
 
 	reqLog := handlers.NewRequestLog()
 	r.Use(handlers.RequestLogMiddleware(reqLog))
-	r.Use(TokenAuthMiddleware(app))
 	r.Use(ocpiFromHeadersMiddleware(app.Config.HubCountry, app.Config.HubParty))
+	r.Use(TokenAuthMiddleware(app))
 
 	h := handlers.New(handlers.HandlerConfig{
 		TokenA:                       app.Config.TokenA,

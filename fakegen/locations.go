@@ -48,6 +48,8 @@ var streetNames = []string{
 
 var parkingTypes = []string{"ON_STREET", "PARKING_GARAGE", "PARKING_LOT", "ALONG_MOTORWAY"}
 
+var facilityOptions = []string{"RESTAURANT", "CAFE", "SHOPPING_MALL", "HOTEL", "SUPERMARKET"}
+
 func generateLocations(rng *rand.Rand, cpos []CPO, total int) []Location {
 	perCPO := total / len(cpos)
 	if perCPO < 1 {
@@ -79,25 +81,73 @@ func generateLocations(rng *rand.Rand, cpos []CPO, total int) []Location {
 				evses[e] = generateEVSE(rng, cpo, locID, e+1)
 			}
 
+			numFacilities := rng.Intn(3)
+			facilities := make([]string, 0, numFacilities)
+			used := map[string]bool{}
+			for f := 0; f < numFacilities; f++ {
+				pick := facilityOptions[rng.Intn(len(facilityOptions))]
+				if !used[pick] {
+					facilities = append(facilities, pick)
+					used[pick] = true
+				}
+			}
+
+			var openingTimes any
+			if rng.Float64() < 0.7 {
+				openingTimes = map[string]any{"twentyfourseven": true}
+			} else {
+				openingTimes = map[string]any{
+					"regular_hours": []map[string]string{
+						{"weekday": "1", "period_begin": "06:00", "period_end": "22:00"},
+						{"weekday": "2", "period_begin": "06:00", "period_end": "22:00"},
+						{"weekday": "3", "period_begin": "06:00", "period_end": "22:00"},
+						{"weekday": "4", "period_begin": "06:00", "period_end": "22:00"},
+						{"weekday": "5", "period_begin": "06:00", "period_end": "22:00"},
+						{"weekday": "6", "period_begin": "08:00", "period_end": "20:00"},
+						{"weekday": "7", "period_begin": "08:00", "period_end": "20:00"},
+					},
+				}
+			}
+
+			isGreen := rng.Float64() < 0.6
+			energyMix := map[string]any{
+				"is_green_energy": isGreen,
+				"energy_sources": []map[string]any{
+					{"source": "SOLAR", "percentage": 40},
+					{"source": "WIND", "percentage": 30},
+					{"source": "GENERAL_FOSSIL", "percentage": 30},
+				},
+			}
+			if isGreen {
+				energyMix["energy_sources"] = []map[string]any{
+					{"source": "SOLAR", "percentage": 50},
+					{"source": "WIND", "percentage": 50},
+				}
+			}
+
 			locations = append(locations, Location{
-				CountryCode: cpo.CountryCode,
-				PartyID:     cpo.PartyID,
-				ID:          locID,
-				Publish:     true,
-				Name:        fmt.Sprintf("%s %s", cpo.Name, city.Name),
-				Address:     fmt.Sprintf("%s %d", street, streetNum),
-				City:        city.Name,
-				PostalCode:  city.PostalCode,
-				Country:     city.Country,
+				CountryCode:        cpo.CountryCode,
+				PartyID:            cpo.PartyID,
+				ID:                 locID,
+				Publish:            true,
+				Name:               fmt.Sprintf("%s %s", cpo.Name, city.Name),
+				Address:            fmt.Sprintf("%s %d", street, streetNum),
+				City:               city.Name,
+				PostalCode:         city.PostalCode,
+				Country:            city.Country,
 				Coordinates: Coords{
 					Latitude:  fmt.Sprintf("%.6f", lat),
 					Longitude: fmt.Sprintf("%.6f", lng),
 				},
-				TimeZone:    city.TimeZone,
-				ParkingType: parkingTypes[rng.Intn(len(parkingTypes))],
-				Operator:    &Operator{Name: cpo.Name},
-				EVSEs:       evses,
-				LastUpdated: seedTime,
+				TimeZone:           city.TimeZone,
+				ParkingType:        parkingTypes[rng.Intn(len(parkingTypes))],
+				Operator:           &Operator{Name: cpo.Name},
+				Facilities:         facilities,
+				OpeningTimes:       openingTimes,
+				ChargingWhenClosed: false,
+				EnergyMix:          energyMix,
+				EVSEs:              evses,
+				LastUpdated:        seedTime,
 			})
 			locIdx++
 		}

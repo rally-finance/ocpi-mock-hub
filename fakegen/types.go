@@ -32,21 +32,25 @@ type Operator struct {
 }
 
 type Location struct {
-	CountryCode string    `json:"country_code"`
-	PartyID     string    `json:"party_id"`
-	ID          string    `json:"id"`
-	Publish     bool      `json:"publish"`
-	Name        string    `json:"name"`
-	Address     string    `json:"address"`
-	City        string    `json:"city"`
-	PostalCode  string    `json:"postal_code"`
-	Country     string    `json:"country"`
-	Coordinates Coords    `json:"coordinates"`
-	TimeZone    string    `json:"time_zone"`
-	ParkingType string    `json:"parking_type"`
-	Operator    *Operator `json:"operator,omitempty"`
-	EVSEs       []EVSE    `json:"evses"`
-	LastUpdated string    `json:"last_updated"`
+	CountryCode        string    `json:"country_code"`
+	PartyID            string    `json:"party_id"`
+	ID                 string    `json:"id"`
+	Publish            bool      `json:"publish"`
+	Name               string    `json:"name"`
+	Address            string    `json:"address"`
+	City               string    `json:"city"`
+	PostalCode         string    `json:"postal_code"`
+	Country            string    `json:"country"`
+	Coordinates        Coords    `json:"coordinates"`
+	TimeZone           string    `json:"time_zone"`
+	ParkingType        string    `json:"parking_type"`
+	Operator           *Operator `json:"operator,omitempty"`
+	Facilities         []string  `json:"facilities,omitempty"`
+	OpeningTimes       any       `json:"opening_times,omitempty"`
+	ChargingWhenClosed bool      `json:"charging_when_closed"`
+	EnergyMix          any       `json:"energy_mix,omitempty"`
+	EVSEs              []EVSE    `json:"evses"`
+	LastUpdated        string    `json:"last_updated"`
 }
 
 type PriceComponent struct {
@@ -56,18 +60,37 @@ type PriceComponent struct {
 	StepSize int     `json:"step_size"`
 }
 
+type TariffRestrictions struct {
+	StartTime string `json:"start_time,omitempty"`
+	EndTime   string `json:"end_time,omitempty"`
+}
+
 type TariffElement struct {
-	PriceComponents []PriceComponent `json:"price_components"`
+	PriceComponents []PriceComponent   `json:"price_components"`
+	Restrictions    *TariffRestrictions `json:"restrictions,omitempty"`
+}
+
+type DisplayText struct {
+	Language string `json:"language"`
+	Text     string `json:"text"`
+}
+
+type Price struct {
+	ExclVat float64 `json:"excl_vat"`
+	InclVat float64 `json:"incl_vat"`
 }
 
 type Tariff struct {
-	CountryCode string          `json:"country_code"`
-	PartyID     string          `json:"party_id"`
-	ID          string          `json:"id"`
-	Currency    string          `json:"currency"`
-	Type        string          `json:"type,omitempty"`
-	Elements    []TariffElement `json:"elements"`
-	LastUpdated string          `json:"last_updated"`
+	CountryCode   string          `json:"country_code"`
+	PartyID       string          `json:"party_id"`
+	ID            string          `json:"id"`
+	Currency      string          `json:"currency"`
+	Type          string          `json:"type,omitempty"`
+	TariffAltText []DisplayText   `json:"tariff_alt_text,omitempty"`
+	MinPrice      *Price          `json:"min_price,omitempty"`
+	MaxPrice      *Price          `json:"max_price,omitempty"`
+	Elements      []TariffElement `json:"elements"`
+	LastUpdated   string          `json:"last_updated"`
 }
 
 type HubClientInfo struct {

@@ -9,7 +9,7 @@ import (
 func (h *Handler) GetHubClientInfo(w http.ResponseWriter, r *http.Request) {
 	items := h.Seed.HubClientInfo
 
-	p := ocpiutil.ParsePaging(r, 50)
+	p := h.parsePaging(r, 50)
 	total := len(items)
 	page := ocpiutil.PaginateSlice(items, p)
 

@@ -48,11 +48,23 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 
 			tokenB, err := app.Store.GetTokenB()
 			if err != nil || tokenB == "" {
+				// Try multi-party lookup
+				party, _ := app.Store.GetPartyByTokenB(provided)
+				if party != nil {
+					next.ServeHTTP(w, r)
+					return
+				}
 				ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Handshake not completed")
 				return
 			}
 
 			if provided != tokenB {
+				// Try multi-party lookup
+				party, _ := app.Store.GetPartyByTokenB(provided)
+				if party != nil {
+					next.ServeHTTP(w, r)
+					return
+				}
 				ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Invalid authorization token")
 				return
 			}

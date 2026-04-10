@@ -26,10 +26,11 @@ func (h *Handler) SetMode(w http.ResponseWriter, r *http.Request) {
 	valid := map[string]bool{
 		"happy": true, "slow": true, "reject": true,
 		"partial": true, "pagination-stress": true,
+		"rate-limit": true, "random-500": true, "auth-fail": true,
 	}
 	if !valid[payload.Mode] {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams,
-			"Mode must be: happy, slow, reject, partial, pagination-stress")
+			"Mode must be: happy, slow, reject, partial, pagination-stress, rate-limit, random-500, auth-fail")
 		return
 	}
 

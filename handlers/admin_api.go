@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 
@@ -144,6 +145,14 @@ func (h *Handler) AdminAuthorize(w http.ResponseWriter, r *http.Request) {
 	if mode == "reject" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"allowed": "NOT_ALLOWED",
+			"token":   map[string]string{"country_code": req.CountryCode, "party_id": req.PartyID, "uid": req.UID},
+		})
+		return
+	}
+	if mode == "auth-fail" {
+		statuses := []string{"NOT_ALLOWED", "EXPIRED", "BLOCKED"}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"allowed": statuses[rand.Intn(len(statuses))],
 			"token":   map[string]string{"country_code": req.CountryCode, "party_id": req.PartyID, "uid": req.UID},
 		})
 		return

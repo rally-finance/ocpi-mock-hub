@@ -32,6 +32,8 @@ func NewRouter(app *App) http.Handler {
 		SessionDurationS:             app.Config.SessionDurationS,
 	}, app.Store, app.Seed, reqLog)
 
+	r.Use(handlers.FaultModeMiddleware(h))
+
 	// OCPI version discovery
 	r.Get("/ocpi/versions", h.GetVersions)
 	r.Get("/ocpi/2.2.1", h.GetVersionDetails)
@@ -61,6 +63,12 @@ func NewRouter(app *App) http.Handler {
 	// OCPI receiver modules (eMSP pushes data to hub)
 	r.Put("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.PutToken)
 	r.Post("/ocpi/2.2.1/receiver/commands/{command}", h.PostCommand)
+	r.Put("/ocpi/2.2.1/receiver/sessions/{countryCode}/{partyID}/{sessionID}", h.PutReceiverSession)
+	r.Post("/ocpi/2.2.1/receiver/cdrs", h.PostReceiverCDR)
+	r.Get("/ocpi/2.2.1/receiver/cdrs/{cdrID}", h.GetReceiverCDR)
+	r.Put("/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}", h.PutChargingProfile)
+	r.Get("/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}", h.GetChargingProfile)
+	r.Delete("/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}", h.DeleteChargingProfile)
 
 	// Simulation tick (for Vercel cron)
 	r.Post("/api/tick", h.Tick)

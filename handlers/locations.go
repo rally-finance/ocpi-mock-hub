@@ -23,7 +23,7 @@ func (h *Handler) GetLocations(w http.ResponseWriter, r *http.Request) {
 	from, to := ocpiutil.ParseDateRange(r)
 	locations = ocpiutil.FilterByLastUpdated(locations, func(l fakegen.Location) string { return l.LastUpdated }, from, to)
 
-	p := ocpiutil.ParsePaging(r, 50)
+	p := h.parsePaging(r, 50)
 	total := len(locations)
 	page := ocpiutil.PaginateSlice(locations, p)
 

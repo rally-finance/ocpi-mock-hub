@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 
@@ -32,7 +33,7 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 		tokens = append(tokens, json.RawMessage(b))
 	}
 
-	p := ocpiutil.ParsePaging(r, 50)
+	p := h.parsePaging(r, 50)
 	total := len(tokens)
 	page := ocpiutil.PaginateSlice(tokens, p)
 
@@ -81,6 +82,15 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	if mode == "reject" {
 		ocpiutil.OK(w, r, map[string]any{
 			"allowed": "NOT_ALLOWED",
+			"token":   map[string]string{"country_code": cc, "party_id": pid, "uid": uid},
+		})
+		return
+	}
+
+	if mode == "auth-fail" {
+		statuses := []string{"NOT_ALLOWED", "EXPIRED", "BLOCKED"}
+		ocpiutil.OK(w, r, map[string]any{
+			"allowed": statuses[rand.Intn(len(statuses))],
 			"token":   map[string]string{"country_code": cc, "party_id": pid, "uid": uid},
 		})
 		return

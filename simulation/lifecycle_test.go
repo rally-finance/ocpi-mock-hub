@@ -63,8 +63,9 @@ func (s *mockStore) ListReservations() ([][]byte, error) {
 	}
 	return r, nil
 }
-func (s *mockStore) DeleteReservation(id string) error { delete(s.reservations, id); return nil }
-func (s *mockStore) GetMode() (string, error)          { return s.mode, nil }
+func (s *mockStore) DeleteReservation(id string) error                   { delete(s.reservations, id); return nil }
+func (s *mockStore) GetChargingProfile(sessionID string) ([]byte, error) { return nil, nil }
+func (s *mockStore) GetMode() (string, error)                            { return s.mode, nil }
 
 func TestTick_PendingToActive(t *testing.T) {
 	store := newMockStore()
@@ -455,4 +456,97 @@ func TestTick_PushesToEMSP(t *testing.T) {
 		t.Errorf("expected at least 2 pushes (callback + session PUT), got %d", pushCount)
 	}
 	_ = lastMethod
+}
+
+func TestCDR_HasEnrichedFields(t *testing.T) {
+	store := newMockStore()
+
+	past := time.Now().UTC().Add(-120 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-ENRICH",
+		StartDateTime: past,
+		Status:        "ACTIVE",
+		CreatedAt:     past,
+		ActivatedAt:   past,
+		Currency:      "EUR",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-ENRICH", data)
+
+	sim := New(store, nil, "", 100, 5)
+	sim.Tick()
+
+	if len(store.cdrs) != 1 {
+		t.Fatalf("expected 1 CDR, got %d", len(store.cdrs))
+	}
+
+	for _, cdrData := range store.cdrs {
+		var cdr map[string]any
+		json.Unmarshal(cdrData, &cdr)
+
+		if cdr["remark"] != "Mock-generated CDR" {
+			t.Errorf("expected remark='Mock-generated CDR', got %v", cdr["remark"])
+		}
+
+		if cdr["total_energy_cost"] == nil {
+			t.Error("expected total_energy_cost in CDR")
+		}
+		if cdr["total_time_cost"] == nil {
+			t.Error("expected total_time_cost in CDR")
+		}
+		if cdr["total_fixed_cost"] == nil {
+			t.Error("expected total_fixed_cost in CDR")
+		}
+		if cdr["total_parking_cost"] == nil {
+			t.Error("expected total_parking_cost in CDR")
+		}
+		if cdr["total_parking_time"] == nil {
+			t.Error("expected total_parking_time in CDR")
+		}
+
+		cp, ok := cdr["charging_periods"].([]any)
+		if !ok || len(cp) == 0 {
+			t.Error("expected non-empty charging_periods in CDR")
+		}
+	}
+}
+
+func TestSession_HasChargingPeriods(t *testing.T) {
+	store := newMockStore()
+
+	past := time.Now().UTC().Add(-5 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-CP",
+		StartDateTime: past,
+		Status:        "ACTIVE",
+		CreatedAt:     past,
+		ActivatedAt:   past,
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-CP", data)
+
+	sim := New(store, nil, "", 100, 60)
+	sim.Tick()
+
+	raw, _ := store.GetSession("SESS-CP")
+	var updated map[string]any
+	json.Unmarshal(raw, &updated)
+
+	cp, ok := updated["charging_periods"].([]any)
+	if !ok || len(cp) == 0 {
+		t.Error("expected non-empty charging_periods on active session after tick")
+	}
+
+	period, ok := cp[0].(map[string]any)
+	if !ok {
+		t.Fatal("first charging period is not a map")
+	}
+	dims, ok := period["dimensions"].([]any)
+	if !ok || len(dims) < 2 {
+		t.Error("expected at least 2 dimensions (ENERGY and TIME)")
+	}
 }

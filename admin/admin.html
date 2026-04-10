@@ -327,12 +327,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     <div class="card">
       <h3>Simulation Mode</h3>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+        <strong>Normal:</strong> happy &nbsp;|&nbsp;
+        <strong>Error:</strong> reject, rate-limit, random-500, auth-fail &nbsp;|&nbsp;
+        <strong>Stress:</strong> slow, partial, pagination-stress
+      </div>
       <div class="mode-buttons" id="mode-buttons">
-        <button data-mode="happy">happy</button>
-        <button data-mode="slow">slow</button>
-        <button data-mode="reject">reject</button>
-        <button data-mode="partial">partial</button>
-        <button data-mode="pagination-stress">pagination-stress</button>
+        <button data-mode="happy" title="Normal operation — all requests succeed">happy</button>
+        <button data-mode="slow" title="Adds 3-8s random delay to all OCPI responses">slow</button>
+        <button data-mode="reject" title="Commands return REJECTED, authorization returns NOT_ALLOWED">reject</button>
+        <button data-mode="partial" title="Returns truncated/malformed JSON responses">partial</button>
+        <button data-mode="pagination-stress" title="Forces 1-item pages on all list endpoints">pagination-stress</button>
+        <button data-mode="rate-limit" title="50% of requests return HTTP 429 with Retry-After header">rate-limit</button>
+        <button data-mode="random-500" title="20% of requests return HTTP 500 server error">random-500</button>
+        <button data-mode="auth-fail" title="Token authorization returns random rejection (NOT_ALLOWED, EXPIRED, BLOCKED)">auth-fail</button>
       </div>
     </div>
 

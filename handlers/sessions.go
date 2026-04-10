@@ -2,12 +2,35 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
+
+func (h *Handler) PutReceiverSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
+		return
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Invalid JSON")
+		return
+	}
+
+	parsed["id"] = sessionID
+	data, _ := json.Marshal(parsed)
+	h.Store.PutSession(sessionID, data)
+
+	ocpiutil.OK(w, r, nil)
+}
 
 func (h *Handler) GetSessionByID(w http.ResponseWriter, r *http.Request) {
 	countryCode := strings.ToUpper(chi.URLParam(r, "countryCode"))
@@ -60,7 +83,7 @@ func (h *Handler) GetSessions(w http.ResponseWriter, r *http.Request) {
 		sessions = append(sessions, json.RawMessage(b))
 	}
 
-	p := ocpiutil.ParsePaging(r, 50)
+	p := h.parsePaging(r, 50)
 	total := len(sessions)
 	page := ocpiutil.PaginateSlice(sessions, p)
 

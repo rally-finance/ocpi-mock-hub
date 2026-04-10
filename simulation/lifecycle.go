@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
+	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
 // Store matches the main package Store interface.
@@ -27,6 +28,7 @@ type Store interface {
 	PutReservation(id string, reservation []byte) error
 	ListReservations() ([][]byte, error)
 	DeleteReservation(id string) error
+	GetChargingProfile(sessionID string) ([]byte, error)
 	GetMode() (string, error)
 }
 
@@ -49,32 +51,7 @@ func New(store Store, seed *fakegen.SeedData, emspCallback string, delayMS, dura
 	}
 }
 
-type sessionRecord struct {
-	CountryCode   string  `json:"country_code"`
-	PartyID       string  `json:"party_id"`
-	ID            string  `json:"id"`
-	StartDateTime string  `json:"start_date_time"`
-	EndDateTime   *string `json:"end_date_time,omitempty"`
-	KWH           float64 `json:"kwh"`
-	CDRToken      struct {
-		UID        string `json:"uid"`
-		Type       string `json:"type"`
-		ContractID string `json:"contract_id,omitempty"`
-	} `json:"cdr_token"`
-	AuthMethod  string `json:"auth_method"`
-	LocationID  string `json:"location_id"`
-	EvseUID     string `json:"evse_uid"`
-	ConnectorID string `json:"connector_id"`
-	Currency    string `json:"currency"`
-	TotalCost   any    `json:"total_cost,omitempty"`
-	Status      string `json:"status"`
-	LastUpdated string `json:"last_updated"`
-
-	ResponseURL  string `json:"_response_url,omitempty"`
-	CreatedAt    string `json:"_created_at,omitempty"`
-	ActivatedAt  string `json:"_activated_at,omitempty"`
-	CallbackSent bool   `json:"_callback_sent,omitempty"`
-}
+type sessionRecord = ocpiutil.SessionRecord
 
 // Tick processes all sessions, advancing their state machine.
 func (s *Simulator) Tick() error {
@@ -222,9 +199,40 @@ func (s *Simulator) updateActiveSession(session *sessionRecord, now time.Time, a
 	if progress > 1 {
 		progress = 1
 	}
+
 	maxKWH := 20.0 + rand.Float64()*40.0
+
+	// If a charging profile exists, cap the simulated power rate
+	if profile, _ := s.store.GetChargingProfile(session.ID); profile != nil {
+		var cp struct {
+			ChargingRateUnit    string `json:"charging_rate_unit"`
+			MinChargingRate     float64 `json:"min_charging_rate"`
+		}
+		if json.Unmarshal(profile, &cp) == nil && cp.MinChargingRate > 0 {
+			rateKW := cp.MinChargingRate / 1000.0
+			if cp.ChargingRateUnit == "A" {
+				rateKW = cp.MinChargingRate * 230.0 / 1000.0
+			}
+			profileMaxKWH := rateKW * (float64(s.sessionDurationS) / 3600.0)
+			if profileMaxKWH < maxKWH {
+				maxKWH = profileMaxKWH
+			}
+		}
+	}
+
 	session.KWH = roundTo(maxKWH*progress, 2)
 	session.LastUpdated = now.Format(time.RFC3339)
+
+	durationHours := age.Hours()
+	session.ChargingPeriods = []any{
+		map[string]any{
+			"start_date_time": session.StartDateTime,
+			"dimensions": []map[string]any{
+				{"type": "ENERGY", "volume": session.KWH},
+				{"type": "TIME", "volume": roundTo(durationHours, 4)},
+			},
+		},
+	}
 
 	data, _ := json.Marshal(session)
 	s.store.PutSession(session.ID, data)
@@ -252,10 +260,24 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 	start, _ := time.Parse(time.RFC3339, session.StartDateTime)
 	durationHours := now.Sub(start).Hours()
 	pricePerKWH := 0.30 + rand.Float64()*0.15
-	totalCost := roundTo(totalKWH*pricePerKWH, 2)
+	energyCost := roundTo(totalKWH*pricePerKWH, 2)
+	timeCostRate := 0.05
+	timeCost := roundTo(durationHours*timeCostRate, 2)
+	fixedCost := 0.50
+	totalCost := roundTo(energyCost+timeCost+fixedCost, 2)
 	session.TotalCost = map[string]float64{
 		"excl_vat": roundTo(totalCost/1.19, 2),
 		"incl_vat": totalCost,
+	}
+
+	session.ChargingPeriods = []any{
+		map[string]any{
+			"start_date_time": session.StartDateTime,
+			"dimensions": []map[string]any{
+				{"type": "ENERGY", "volume": session.KWH},
+				{"type": "TIME", "volume": roundTo(durationHours, 4)},
+			},
+		},
 	}
 
 	data, _ := json.Marshal(session)
@@ -273,18 +295,24 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 		"cdr_token":       session.CDRToken,
 		"auth_method":     session.AuthMethod,
 		"cdr_location": map[string]any{
-			"id":                 session.LocationID,
-			"evse_uid":           session.EvseUID,
-			"evse_id":            session.EvseUID,
-			"connector_id":       session.ConnectorID,
-			"connector_standard": "IEC_62196_T2",
-			"connector_format":   "SOCKET",
+			"id":                   session.LocationID,
+			"evse_uid":             session.EvseUID,
+			"evse_id":              session.EvseUID,
+			"connector_id":         session.ConnectorID,
+			"connector_standard":   "IEC_62196_T2",
+			"connector_format":     "SOCKET",
 			"connector_power_type": "AC_3_PHASE",
 		},
 		"currency":     session.Currency,
 		"total_cost":   session.TotalCost,
 		"total_energy": session.KWH,
 		"total_time":   roundTo(durationHours, 2),
+		"total_fixed_cost":   map[string]float64{"excl_vat": roundTo(fixedCost/1.19, 2), "incl_vat": fixedCost},
+		"total_energy_cost":  map[string]float64{"excl_vat": roundTo(energyCost/1.19, 2), "incl_vat": energyCost},
+		"total_time_cost":    map[string]float64{"excl_vat": roundTo(timeCost/1.19, 2), "incl_vat": timeCost},
+		"total_parking_cost": map[string]float64{"excl_vat": 0, "incl_vat": 0},
+		"total_parking_time": 0,
+		"remark":             "Mock-generated CDR",
 		"charging_periods": []map[string]any{
 			{
 				"start_date_time": session.StartDateTime,

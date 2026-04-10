@@ -534,7 +534,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <div id="log" class="section">
     <h2>Request Log</h2>
     <div class="toolbar">
-      <span class="auto-refresh">Last 100 requests (auto-refresh 5s)</span>
+      <input type="text" id="log-filter" placeholder="Filter by path, method, status…" style="flex:1;max-width:320px" oninput="applyLogFilter()">
+      <span class="auto-refresh" id="log-count">Last 500 requests (auto-refresh 5s)</span>
     </div>
     <div class="card">
       <div class="table-wrap">
@@ -790,26 +791,45 @@ async function loadCDRs() {
 }
 
 // Request Log
+let logData = [];
+
+function renderLogRows(entries) {
+  const body = $('#log-body');
+  if (!entries.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">No requests logged</td></tr>';
+    return;
+  }
+  body.innerHTML = entries.map(e => {
+    const statusClass = e.status < 300 ? 'badge-green' : e.status < 500 ? 'badge-orange' : 'badge-red';
+    return `<tr>
+      <td>${fmtTime(e.timestamp)}</td>
+      <td><strong>${e.method}</strong></td>
+      <td title="${e.path}" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.path}</td>
+      <td><span class="badge ${statusClass}">${e.status}</span></td>
+      <td>${e.duration_ms}ms</td>
+      <td>${e.ocpi_from !== '*' ? e.ocpi_from : ''}</td>
+      <td>${e.ocpi_to !== '*' ? e.ocpi_to : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function applyLogFilter() {
+  const q = ($('#log-filter').value || '').toLowerCase();
+  const filtered = q ? logData.filter(e =>
+    e.method.toLowerCase().includes(q) ||
+    e.path.toLowerCase().includes(q) ||
+    String(e.status).includes(q)
+  ) : logData;
+  $('#log-count').textContent = q
+    ? `${filtered.length} of ${logData.length} requests`
+    : `Last ${logData.length} requests (auto-refresh 5s)`;
+  renderLogRows(filtered);
+}
+
 async function loadLog() {
   try {
-    const data = await api('/admin/log');
-    const body = $('#log-body');
-    if (!data.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty">No requests logged</td></tr>';
-      return;
-    }
-    body.innerHTML = data.map(e => {
-      const statusClass = e.status < 300 ? 'badge-green' : e.status < 500 ? 'badge-orange' : 'badge-red';
-      return `<tr>
-        <td>${fmtTime(e.timestamp)}</td>
-        <td><strong>${e.method}</strong></td>
-        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${e.path}</td>
-        <td><span class="badge ${statusClass}">${e.status}</span></td>
-        <td>${e.duration_ms}ms</td>
-        <td>${e.ocpi_from !== '*' ? e.ocpi_from : ''}</td>
-        <td>${e.ocpi_to !== '*' ? e.ocpi_to : ''}</td>
-      </tr>`;
-    }).join('');
+    logData = await api('/admin/log');
+    applyLogFilter();
   } catch (e) {
     console.error('loadLog:', e);
   }

@@ -22,7 +22,7 @@ func (pw *partialWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (pw *partialWriter) Flush() {
+func (pw *partialWriter) flushTruncated() {
 	if len(pw.buf) == 0 {
 		return
 	}
@@ -31,10 +31,11 @@ func (pw *partialWriter) Flush() {
 		cutoff = 1
 	}
 	pw.ResponseWriter.Write(pw.buf[:cutoff])
+	pw.buf = nil
 }
 
 // wrapPartialWriter returns a partialWriter that truncates JSON output.
-// Caller must call Flush() on the returned writer after the handler completes.
+// Caller must call flushTruncated() on the returned writer after the handler completes.
 func wrapPartialWriter(w http.ResponseWriter) *partialWriter {
 	return &partialWriter{ResponseWriter: w}
 }
@@ -59,9 +60,9 @@ func FaultModeMiddleware(h *Handler) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 
 			case "partial":
-				pw := wrapPartialWriter(w)
-				next.ServeHTTP(pw, r)
-				pw.Flush()
+			pw := wrapPartialWriter(w)
+			next.ServeHTTP(pw, r)
+			pw.flushTruncated()
 
 			case "rate-limit":
 				if rand.Float64() < 0.5 {

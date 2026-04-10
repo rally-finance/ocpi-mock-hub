@@ -69,6 +69,7 @@ type sessionRecord struct {
 
 	ResponseURL  string `json:"_response_url,omitempty"`
 	CreatedAt    string `json:"_created_at,omitempty"`
+	ActivatedAt  string `json:"_activated_at,omitempty"`
 	CallbackSent bool   `json:"_callback_sent,omitempty"`
 }
 
@@ -97,19 +98,26 @@ func (s *Simulator) Tick() error {
 		}
 
 		created, _ := time.Parse(time.RFC3339, session.CreatedAt)
-		age := now.Sub(created)
+		pendingAge := now.Sub(created)
 
 		switch session.Status {
 		case "PENDING":
-			if age > time.Duration(s.commandDelayMS)*time.Millisecond {
+			if pendingAge > time.Duration(s.commandDelayMS)*time.Millisecond {
 				s.advancePendingToActive(&session, emspURL, now)
 			}
 		case "ACTIVE":
-			if age > time.Duration(s.sessionDurationS)*time.Second {
+			activated := created
+			if session.ActivatedAt != "" {
+				activated, _ = time.Parse(time.RFC3339, session.ActivatedAt)
+			}
+			activeAge := now.Sub(activated)
+			if activeAge > time.Duration(s.sessionDurationS)*time.Second {
 				s.completeSession(&session, emspURL, now)
 			} else {
-				s.updateActiveSession(&session, now, age)
+				s.updateActiveSession(&session, now, activeAge)
 			}
+		case "STOPPING":
+			s.completeSession(&session, emspURL, now)
 		case "COMPLETED":
 			// Already done; keep in store for pull queries.
 			continue
@@ -126,12 +134,13 @@ func (s *Simulator) advancePendingToActive(session *sessionRecord, emspURL strin
 			"result":     "ACCEPTED",
 			"session_id": session.ID,
 		}
-		s.pushToEMSP(session.ResponseURL, callback)
+		s.pushToEMSP("POST", session.ResponseURL, callback)
 		session.CallbackSent = true
 	}
 
 	session.Status = "ACTIVE"
 	session.KWH = 0.5
+	session.ActivatedAt = now.Format(time.RFC3339)
 	session.LastUpdated = now.Format(time.RFC3339)
 
 	data, _ := json.Marshal(session)
@@ -141,7 +150,7 @@ func (s *Simulator) advancePendingToActive(session *sessionRecord, emspURL strin
 	if emspURL != "" {
 		url := fmt.Sprintf("%s/receiver/sessions/%s/%s/%s",
 			emspURL, session.CountryCode, session.PartyID, session.ID)
-		s.pushToEMSP(url, session)
+		s.pushToEMSP("PUT", url, session)
 	}
 
 	log.Printf("[tick] session %s: PENDING -> ACTIVE", session.ID)
@@ -161,10 +170,20 @@ func (s *Simulator) updateActiveSession(session *sessionRecord, now time.Time, a
 }
 
 func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now time.Time) {
+	prevStatus := session.Status
 	nowStr := now.Format(time.RFC3339)
 	session.Status = "COMPLETED"
 	session.EndDateTime = &nowStr
 	session.LastUpdated = nowStr
+
+	if session.ResponseURL != "" && !session.CallbackSent {
+		callback := map[string]any{
+			"result":     "ACCEPTED",
+			"session_id": session.ID,
+		}
+		s.pushToEMSP("POST", session.ResponseURL, callback)
+		session.CallbackSent = true
+	}
 
 	totalKWH := 15.0 + rand.Float64()*45.0
 	session.KWH = roundTo(totalKWH, 2)
@@ -224,23 +243,23 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 	if emspURL != "" {
 		sessionURL := fmt.Sprintf("%s/receiver/sessions/%s/%s/%s",
 			emspURL, session.CountryCode, session.PartyID, session.ID)
-		s.pushToEMSP(sessionURL, session)
+		s.pushToEMSP("PUT", sessionURL, session)
 
 		cdrURL := fmt.Sprintf("%s/receiver/cdrs/%s", emspURL, cdrID)
-		s.pushToEMSP(cdrURL, cdr)
+		s.pushToEMSP("POST", cdrURL, cdr)
 	}
 
-	log.Printf("[tick] session %s: ACTIVE -> COMPLETED (CDR %s, %.1f kWh)", session.ID, cdrID, session.KWH)
+	log.Printf("[tick] session %s: %s -> COMPLETED (CDR %s, %.1f kWh)", session.ID, prevStatus, cdrID, session.KWH)
 }
 
-func (s *Simulator) pushToEMSP(url string, payload any) {
+func (s *Simulator) pushToEMSP(method, url string, payload any) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[push] marshal error: %v", err)
 		return
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[push] request error: %v", err)
 		return

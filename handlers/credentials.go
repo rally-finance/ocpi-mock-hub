@@ -49,8 +49,10 @@ func (h *Handler) PostCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store eMSP's credentials and callback URL.
+	// Store eMSP's credentials, callback URL, and the token the hub
+	// should use when pushing data back to the eMSP.
 	h.Store.SetEMSPCredentials(body)
+	h.Store.SetEMSPOwnToken(creds.Token)
 	if creds.URL != "" {
 		h.Store.SetEMSPCallbackURL(creds.URL)
 	}

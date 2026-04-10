@@ -16,6 +16,9 @@ func NewApp(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Mode != "" {
+		store.SetMode(cfg.Mode)
+	}
 	return &App{
 		Config: cfg,
 		Store:  store,

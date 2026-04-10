@@ -56,9 +56,10 @@ type SessionRecord struct {
 	LastUpdated string  `json:"last_updated"`
 
 	// Internal fields for tick processing (not part of OCPI spec)
-	ResponseURL string `json:"_response_url,omitempty"`
-	CreatedAt   string `json:"_created_at,omitempty"`
-	CallbackSent bool  `json:"_callback_sent,omitempty"`
+	ResponseURL  string `json:"_response_url,omitempty"`
+	CreatedAt    string `json:"_created_at,omitempty"`
+	ActivatedAt  string `json:"_activated_at,omitempty"`
+	CallbackSent bool   `json:"_callback_sent,omitempty"`
 }
 
 func (h *Handler) PostCommand(w http.ResponseWriter, r *http.Request) {
@@ -169,10 +170,13 @@ func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode
 		if raw != nil {
 			var session SessionRecord
 			if err := json.Unmarshal(raw, &session); err == nil {
-				session.Status = "COMPLETED"
 				now := time.Now().UTC().Format(time.RFC3339)
-				session.EndDateTime = &now
+				session.Status = "STOPPING"
 				session.LastUpdated = now
+				if payload.ResponseURL != "" {
+					session.ResponseURL = payload.ResponseURL
+					session.CallbackSent = false
+				}
 				data, _ := json.Marshal(session)
 				h.Store.PutSession(session.ID, data)
 			}

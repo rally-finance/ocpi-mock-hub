@@ -196,6 +196,17 @@ func (r *RedisStore) DeleteReservation(id string) error {
 }
 
 func (r *RedisStore) PutParty(key string, state []byte) error {
+	// Remove stale tokenB index if the party already exists with a different TokenB
+	if existing, _ := r.get("party:" + key); existing != "" {
+		var old struct{ TokenB string `json:"token_b"` }
+		if json.Unmarshal([]byte(existing), &old) == nil && old.TokenB != "" {
+			var incoming struct{ TokenB string `json:"token_b"` }
+			if json.Unmarshal(state, &incoming) == nil && incoming.TokenB != old.TokenB {
+				r.del("tokenb:" + old.TokenB)
+			}
+		}
+	}
+
 	if err := r.set("party:"+key, string(state)); err != nil {
 		return err
 	}

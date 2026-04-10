@@ -287,7 +287,11 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 	start, _ := time.Parse(time.RFC3339, session.StartDateTime)
 	durationHours := now.Sub(start).Hours()
 	pricePerKWH := 0.30 + rand.Float64()*0.15
-	totalCost := roundTo(totalKWH*pricePerKWH, 2)
+	energyCost := roundTo(totalKWH*pricePerKWH, 2)
+	timeCostRate := 0.05
+	timeCost := roundTo(durationHours*timeCostRate, 2)
+	fixedCost := 0.50
+	totalCost := roundTo(energyCost+timeCost+fixedCost, 2)
 	session.TotalCost = map[string]float64{
 		"excl_vat": roundTo(totalCost/1.19, 2),
 		"incl_vat": totalCost,
@@ -305,11 +309,6 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 
 	data, _ := json.Marshal(session)
 	s.store.PutSession(session.ID, data)
-
-	energyCost := roundTo(totalKWH*pricePerKWH, 2)
-	timeCostRate := 0.05
-	timeCost := roundTo(durationHours*timeCostRate, 2)
-	fixedCost := 0.50
 
 	// Generate CDR.
 	cdrID := "CDR-" + uuid.NewString()[:8]

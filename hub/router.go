@@ -32,6 +32,8 @@ func NewRouter(app *App) http.Handler {
 		SessionDurationS:             app.Config.SessionDurationS,
 	}, app.Store, app.Seed, reqLog)
 
+	r.Use(handlers.FaultModeMiddleware(h))
+
 	// OCPI version discovery
 	r.Get("/ocpi/versions", h.GetVersions)
 	r.Get("/ocpi/2.2.1", h.GetVersionDetails)

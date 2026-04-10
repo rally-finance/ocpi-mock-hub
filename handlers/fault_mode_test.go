@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// faultMiddlewareHandler wraps a dummy inner handler with FaultModeMiddleware
+// and returns the recorded response. The inner handler writes a 200 + JSON body
+// so we can distinguish "passed through" from "short-circuited".
+func faultMiddlewareHandler(h *Handler) http.Handler {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status_code":1000,"data":"ok"}`))
+	})
+	return FaultModeMiddleware(h)(inner)
+}
+
 func TestPaginationStressMode_ForcesLimit1(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)
@@ -54,23 +66,23 @@ func TestRateLimitMode_Returns429(t *testing.T) {
 	store := h.Store.(*testStore)
 	store.mode = "rate-limit"
 
+	mw := faultMiddlewareHandler(h)
+
 	got429 := false
 	got200 := false
 	for i := 0; i < 50; i++ {
-		pw := wrapPartialWriter(httptest.NewRecorder())
 		w := httptest.NewRecorder()
-		_ = pw
+		mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 
-		if h.applyFaultMode(w, httptest.NewRequest("GET", "/", nil)) {
+		if w.Code == http.StatusOK {
 			got200 = true
-		} else {
+		} else if w.Code == http.StatusTooManyRequests {
 			got429 = true
-			if w.Code != http.StatusTooManyRequests {
-				t.Errorf("expected 429, got %d", w.Code)
-			}
 			if w.Header().Get("Retry-After") != "2" {
 				t.Error("expected Retry-After: 2 header")
 			}
+		} else {
+			t.Errorf("unexpected status %d", w.Code)
 		}
 	}
 
@@ -88,17 +100,20 @@ func TestRandom500Mode_ReturnsErrors(t *testing.T) {
 	store := h.Store.(*testStore)
 	store.mode = "random-500"
 
+	mw := faultMiddlewareHandler(h)
+
 	got500 := false
 	gotOK := false
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
-		if h.applyFaultMode(w, httptest.NewRequest("GET", "/", nil)) {
+		mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+
+		if w.Code == http.StatusOK {
 			gotOK = true
-		} else {
+		} else if w.Code == http.StatusInternalServerError {
 			got500 = true
-			if w.Code != http.StatusInternalServerError {
-				t.Errorf("expected 500, got %d", w.Code)
-			}
+		} else {
+			t.Errorf("unexpected status %d", w.Code)
 		}
 	}
 
@@ -157,14 +172,15 @@ func TestSlowMode_AddsDelay(t *testing.T) {
 	store := h.Store.(*testStore)
 	store.mode = "slow"
 
+	mw := faultMiddlewareHandler(h)
+
 	start := time.Now()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/", nil)
-	proceed := h.applyFaultMode(w, r)
+	mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	elapsed := time.Since(start)
 
-	if !proceed {
-		t.Error("slow mode should still proceed after delay")
+	if w.Code != http.StatusOK {
+		t.Errorf("slow mode should still return 200 after delay, got %d", w.Code)
 	}
 	if elapsed < 3*time.Second {
 		t.Errorf("expected at least 3s delay, got %v", elapsed)
@@ -174,7 +190,6 @@ func TestSlowMode_AddsDelay(t *testing.T) {
 func TestPartialMode_TruncatesJSON(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)
-	store.mode = "pagination-stress" // use to populate data
 
 	for i := 0; i < 3; i++ {
 		s := map[string]any{
@@ -185,38 +200,46 @@ func TestPartialMode_TruncatesJSON(t *testing.T) {
 		store.PutSession(s["id"].(string), data)
 	}
 
-	// Switch to partial mode for the actual test
 	store.mode = "partial"
 
-	pw := wrapPartialWriter(httptest.NewRecorder())
-	r := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/sessions", nil)
-	h.GetSessions(pw, r)
-	pw.Flush()
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.GetSessions(w, r)
+	})
+	mw := FaultModeMiddleware(h)(inner)
 
-	body := pw.buf
-	truncated := pw.ResponseWriter.(*httptest.ResponseRecorder).Body.Bytes()
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, httptest.NewRequest("GET", "/ocpi/2.2.1/sender/sessions", nil))
 
-	// The truncated output should be shorter than the full body
-	if len(truncated) >= len(body) {
-		t.Errorf("expected truncated body (%d bytes) to be shorter than full body (%d bytes)", len(truncated), len(body))
+	body := w.Body.Bytes()
+
+	// Get the full body for comparison by running without partial mode
+	store.mode = "happy"
+	wFull := httptest.NewRecorder()
+	h.GetSessions(wFull, httptest.NewRequest("GET", "/ocpi/2.2.1/sender/sessions", nil))
+	fullBody := wFull.Body.Bytes()
+
+	if len(body) >= len(fullBody) {
+		t.Errorf("expected truncated body (%d bytes) to be shorter than full body (%d bytes)", len(body), len(fullBody))
 	}
 
-	// The truncated output should NOT be valid JSON
 	var dummy any
-	if json.Unmarshal(truncated, &dummy) == nil {
+	if json.Unmarshal(body, &dummy) == nil {
 		t.Error("expected truncated JSON to be invalid, but it parsed successfully")
 	}
 }
 
-func TestSlowMode_Proceeds(t *testing.T) {
+func TestHappyMode_PassesThrough(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)
 	store.mode = "happy"
 
+	mw := faultMiddlewareHandler(h)
+
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/", nil)
-	if !h.applyFaultMode(w, r) {
-		t.Error("happy mode should proceed")
+	mw.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+
+	if w.Code != http.StatusOK {
+		t.Errorf("happy mode should pass through, got %d", w.Code)
 	}
 }
 

@@ -1,3 +1,13 @@
+<a href="https://www.getrally.com/">
+  <img src="https://www.getrally.com/apple-touch-icon.png" alt="Rally" height="40">
+</a>
+
+### Built by [Rally](https://www.getrally.com/)
+
+[Rally](https://www.getrally.com/) builds modern fleet expense management for European businesses. One Visa-powered card replaces legacy fuel cards and scattered apps, giving fleet operators real-time spend controls, AI-powered analytics, and fraud detection across 21 countries.
+
+---
+
 # ocpi-mock-hub
 
 A mock OCPI 2.2.1 hub server in Go for end-to-end development and testing of OCPI integrations without a live partner.

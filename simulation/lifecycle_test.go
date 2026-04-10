@@ -422,6 +422,82 @@ func TestTick_EVSENotSetAvailableWhenOtherSessionActive(t *testing.T) {
 	}
 }
 
+func TestTick_StoppingCallbackFires(t *testing.T) {
+	var callbackCount int32
+	var lastBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/stop-cb") {
+			atomic.AddInt32(&callbackCount, 1)
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &lastBody)
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	store := newMockStore()
+	past := time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-STOP-CB",
+		StartDateTime: past,
+		Status:        "STOPPING",
+		CreatedAt:     past,
+		ResponseURL:   ts.URL + "/stop-cb",
+		CallbackSent:  false,
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-STOP-CB", data)
+
+	sim := New(store, nil, "", 100, 60)
+	sim.Tick()
+
+	if atomic.LoadInt32(&callbackCount) != 1 {
+		t.Errorf("expected 1 stop callback, got %d", callbackCount)
+	}
+	if lastBody["result"] != "ACCEPTED" {
+		t.Errorf("expected callback result ACCEPTED, got %v", lastBody["result"])
+	}
+	if lastBody["session_id"] != "SESS-STOP-CB" {
+		t.Errorf("expected session_id in callback, got %v", lastBody["session_id"])
+	}
+}
+
+func TestTick_AuthHeaderOnPush(t *testing.T) {
+	var capturedAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if capturedAuth == "" {
+			capturedAuth = r.Header.Get("Authorization")
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	store := newMockStore()
+	store.callbackURL = ts.URL
+	store.emspToken = "secret-emsp-token"
+
+	past := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-AUTH",
+		StartDateTime: past,
+		Status:        "PENDING",
+		CreatedAt:     past,
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-AUTH", data)
+
+	sim := New(store, nil, ts.URL, 100, 60)
+	sim.Tick()
+
+	if capturedAuth != "Token secret-emsp-token" {
+		t.Errorf("expected Authorization header 'Token secret-emsp-token', got %q", capturedAuth)
+	}
+}
+
 func TestTick_PushesToEMSP(t *testing.T) {
 	var pushCount int32
 	var lastMethod string

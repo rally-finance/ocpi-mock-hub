@@ -29,6 +29,12 @@ When a START_SESSION command is received:
 - After configurable duration, session `COMPLETED`, a CDR is generated, and EVSE status is pushed back to `AVAILABLE`
 - GET endpoints dynamically overlay EVSE status based on active sessions
 
+When a STOP_SESSION command is received:
+- Session transitions to `STOPPING` (the async command result callback fires on the next tick)
+- On the next tick, session moves to `COMPLETED`, a CDR is generated, and EVSE status returns to `AVAILABLE`
+
+Full state machine: `PENDING` → `ACTIVE` → `COMPLETED`, or `ACTIVE` → `STOPPING` → `COMPLETED`
+
 In standalone mode, a background ticker handles this. On Vercel, a cron job (`/api/tick`) does it.
 
 ## Configuration

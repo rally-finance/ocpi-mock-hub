@@ -187,27 +187,35 @@ func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode
 		return
 	}
 
-	if payload.SessionID != "" {
-		raw, _ := h.Store.GetSession(payload.SessionID)
-		if raw != nil {
-			var session SessionRecord
-			if err := json.Unmarshal(raw, &session); err == nil {
-				now := time.Now().UTC().Format(time.RFC3339)
-				session.Status = "STOPPING"
-				session.LastUpdated = now
-				if payload.ResponseURL != "" {
-					session.ResponseURL = payload.ResponseURL
-					session.CallbackSent = false
-				}
-				data, _ := json.Marshal(session)
-				h.Store.PutSession(session.ID, data)
-			}
-		}
+	if payload.SessionID == "" {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
 	}
 
-	ocpiutil.OK(w, r, map[string]string{
-		"result": "ACCEPTED",
-	})
+	raw, _ := h.Store.GetSession(payload.SessionID)
+	if raw == nil {
+		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
+		return
+	}
+
+	var session SessionRecord
+	if err := json.Unmarshal(raw, &session); err == nil {
+		now := time.Now().UTC().Format(time.RFC3339)
+		session.Status = "STOPPING"
+		session.LastUpdated = now
+		// A STOP_SESSION may carry its own response_url for the async
+		// command result callback.  Reset CallbackSent so the tick loop
+		// sends the stop-result callback (distinct from the earlier
+		// start-result callback that was tracked by the same flag).
+		if payload.ResponseURL != "" {
+			session.ResponseURL = payload.ResponseURL
+			session.CallbackSent = false
+		}
+		data, _ := json.Marshal(session)
+		h.Store.PutSession(session.ID, data)
+	}
+
+	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }
 
 func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, mode string) {

@@ -201,17 +201,16 @@ func (s *Simulator) advancePendingToActive(session *sessionRecord, emspURL strin
 		s.pushToEMSP("PUT", url, session)
 	}
 
-	// Push EVSE status -> CHARGING
+	// Push full EVSE object with status CHARGING
 	if emspURL != "" && s.seed != nil && session.LocationID != "" && session.EvseUID != "" {
 		loc, evse := s.seed.EVSEByUID(session.LocationID, session.EvseUID)
 		if loc != nil && evse != nil {
 			evseURL := fmt.Sprintf("%s/receiver/locations/%s/%s/%s/%s",
 				emspURL, loc.CountryCode, loc.PartyID, loc.ID, evse.UID)
-			evseUpdate := map[string]string{
-				"status":       "CHARGING",
-				"last_updated": now.Format(time.RFC3339),
-			}
-			s.pushToEMSP("PUT", evseURL, evseUpdate)
+			clone := *evse
+			clone.Status = "CHARGING"
+			clone.LastUpdated = now.Format(time.RFC3339)
+			s.pushToEMSP("PUT", evseURL, clone)
 		}
 	}
 
@@ -311,21 +310,45 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 		s.pushToEMSP("POST", cdrURL, cdr)
 	}
 
-	// Push EVSE status -> AVAILABLE
+	// Push full EVSE object back to AVAILABLE only if no other active sessions use this EVSE
 	if emspURL != "" && s.seed != nil && session.LocationID != "" && session.EvseUID != "" {
-		loc, evse := s.seed.EVSEByUID(session.LocationID, session.EvseUID)
-		if loc != nil && evse != nil {
-			evseURL := fmt.Sprintf("%s/receiver/locations/%s/%s/%s/%s",
-				emspURL, loc.CountryCode, loc.PartyID, loc.ID, evse.UID)
-			evseUpdate := map[string]string{
-				"status":       "AVAILABLE",
-				"last_updated": nowStr,
+		if !s.hasOtherActiveSession(session.EvseUID, session.ID) {
+			loc, evse := s.seed.EVSEByUID(session.LocationID, session.EvseUID)
+			if loc != nil && evse != nil {
+				evseURL := fmt.Sprintf("%s/receiver/locations/%s/%s/%s/%s",
+					emspURL, loc.CountryCode, loc.PartyID, loc.ID, evse.UID)
+				clone := *evse
+				clone.Status = "AVAILABLE"
+				clone.LastUpdated = nowStr
+				s.pushToEMSP("PUT", evseURL, clone)
 			}
-			s.pushToEMSP("PUT", evseURL, evseUpdate)
 		}
 	}
 
 	log.Printf("[tick] session %s: %s -> COMPLETED (CDR %s, %.1f kWh)", session.ID, prevStatus, cdrID, session.KWH)
+}
+
+// hasOtherActiveSession checks whether any session other than excludeID
+// references the given EVSE UID and is still ACTIVE or PENDING.
+func (s *Simulator) hasOtherActiveSession(evseUID, excludeID string) bool {
+	raw, err := s.store.ListSessions()
+	if err != nil {
+		return false
+	}
+	for _, b := range raw {
+		var sess struct {
+			ID      string `json:"id"`
+			EvseUID string `json:"evse_uid"`
+			Status  string `json:"status"`
+		}
+		if json.Unmarshal(b, &sess) == nil &&
+			sess.ID != excludeID &&
+			sess.EvseUID == evseUID &&
+			(sess.Status == "ACTIVE" || sess.Status == "PENDING") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Simulator) pushToEMSP(method, url string, payload any) {

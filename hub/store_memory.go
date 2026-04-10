@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-const defaultPartyKey = "DEFAULT"
-
 type MemoryStore struct {
 	mu                sync.RWMutex
 	tokenB            string

@@ -45,8 +45,8 @@ func TestPostReceiverCDR_Happy(t *testing.T) {
 
 	h.PostReceiverCDR(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", w.Code)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201", w.Code)
 	}
 
 	if loc := w.Header().Get("Location"); !strings.Contains(loc, "CDR-EXT-1") {

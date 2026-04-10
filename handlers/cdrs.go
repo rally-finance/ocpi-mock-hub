@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
@@ -35,7 +36,10 @@ func (h *Handler) PostReceiverCDR(w http.ResponseWriter, r *http.Request) {
 	scheme := resolveScheme(r)
 	host := resolveHost(r)
 	w.Header().Set("Location", fmt.Sprintf("%s://%s/ocpi/2.2.1/receiver/cdrs/%s", scheme, host, id))
-	ocpiutil.OK(w, r, nil)
+	ocpiutil.Write(w, r, http.StatusCreated, ocpiutil.Response{
+		StatusCode: ocpiutil.StatusSuccess,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 func (h *Handler) GetReceiverCDR(w http.ResponseWriter, r *http.Request) {

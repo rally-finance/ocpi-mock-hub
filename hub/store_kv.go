@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -192,6 +193,64 @@ func (r *RedisStore) ListReservations() ([][]byte, error) {
 
 func (r *RedisStore) DeleteReservation(id string) error {
 	return r.del("reservation:" + id)
+}
+
+func (r *RedisStore) PutParty(key string, state []byte) error {
+	if err := r.set("party:"+key, string(state)); err != nil {
+		return err
+	}
+	var p struct{ TokenB string `json:"token_b"` }
+	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
+		return r.set("tokenb:"+p.TokenB, key)
+	}
+	return nil
+}
+
+func (r *RedisStore) GetParty(key string) ([]byte, error) {
+	v, err := r.get("party:" + key)
+	if v == "" {
+		return nil, err
+	}
+	return []byte(v), err
+}
+
+func (r *RedisStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
+	key, err := r.get("tokenb:" + tokenB)
+	if key == "" {
+		return nil, err
+	}
+	return r.GetParty(key)
+}
+
+func (r *RedisStore) DeleteParty(key string) error {
+	raw, _ := r.GetParty(key)
+	if raw != nil {
+		var p struct{ TokenB string `json:"token_b"` }
+		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
+			r.del("tokenb:" + p.TokenB)
+		}
+	}
+	return r.del("party:" + key)
+}
+
+func (r *RedisStore) ListParties() ([][]byte, error) {
+	return r.listByPrefix("party:*")
+}
+
+func (r *RedisStore) PutChargingProfile(sessionID string, profile []byte) error {
+	return r.set("chargingprofile:"+sessionID, string(profile))
+}
+
+func (r *RedisStore) GetChargingProfile(sessionID string) ([]byte, error) {
+	v, err := r.get("chargingprofile:" + sessionID)
+	if v == "" {
+		return nil, err
+	}
+	return []byte(v), err
+}
+
+func (r *RedisStore) DeleteChargingProfile(sessionID string) error {
+	return r.del("chargingprofile:" + sessionID)
 }
 
 func (r *RedisStore) GetMode() (string, error) {

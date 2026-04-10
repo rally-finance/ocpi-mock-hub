@@ -49,6 +49,14 @@ type Store interface {
 	GetReservation(id string) ([]byte, error)
 	ListReservations() ([][]byte, error)
 	DeleteReservation(id string) error
+	PutChargingProfile(sessionID string, profile []byte) error
+	GetChargingProfile(sessionID string) ([]byte, error)
+	DeleteChargingProfile(sessionID string) error
+	PutParty(key string, state []byte) error
+	GetParty(key string) ([]byte, error)
+	GetPartyByTokenB(tokenB string) ([]byte, error)
+	DeleteParty(key string) error
+	ListParties() ([][]byte, error)
 	GetMode() (string, error)
 	SetMode(mode string) error
 }

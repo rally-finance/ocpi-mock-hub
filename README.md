@@ -51,11 +51,19 @@ In standalone mode, a background ticker handles this. On Vercel, a cron job (`/a
 
 Set via `MOCK_MODE` env var or `POST /admin/mode`:
 
-- **happy** — Normal operation
-- **slow** — Extended command delays
-- **reject** — Commands return REJECTED
-- **partial** — Some data has missing optional fields
-- **pagination-stress** — Very small page sizes
+**Normal:**
+- **happy** — Normal operation, all requests succeed
+
+**Error modes:**
+- **reject** — Commands return REJECTED, authorization returns NOT_ALLOWED
+- **rate-limit** — 50% of requests return HTTP 429 with `Retry-After: 2` header
+- **random-500** — ~20% of requests return HTTP 500 server error
+- **auth-fail** — Token authorization returns random rejections (NOT_ALLOWED, EXPIRED, BLOCKED)
+
+**Stress modes:**
+- **slow** — Adds 3–8 second random delay to all OCPI responses
+- **partial** — Returns truncated/malformed JSON (tests eMSP error handling)
+- **pagination-stress** — Forces 1-item pages on all list endpoints
 
 ## Connecting your eMSP
 
@@ -113,8 +121,38 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 |--------|------|------|-------------|
 | PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/update a token |
 | POST | `/ocpi/2.2.1/receiver/commands/{command}` | Token B | Send a command |
+| PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/update a session |
+| POST | `/ocpi/2.2.1/receiver/cdrs` | Token B | Push a CDR (returns `Location` header) |
+| GET | `/ocpi/2.2.1/receiver/cdrs/{cdrID}` | Token B | Get a received CDR |
+| PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Set charging profile for a session |
+| GET | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Get active charging profile |
+| DELETE | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Clear charging profile |
 
 All sender list endpoints support `date_from`/`date_to` query parameters, `offset`/`limit` paging, and `OCPI-To-Country-Code`/`OCPI-To-Party-Id` header filtering.
+
+## Multi-Party Support
+
+The hub supports multiple eMSPs connected simultaneously. Each party gets its own Token B, callback URL, and credentials record keyed by `{country_code}/{party_id}`. The auth middleware resolves incoming Token B values to the correct party.
+
+Use the admin-initiated handshake flow or standard `POST /credentials` from different eMSPs to register multiple parties.
+
+## Charging Profiles
+
+The `ChargingProfiles` receiver module lets an eMSP set power limits on active sessions:
+
+- **PUT** stores the profile and sends an async `ActiveChargingProfileResult` callback
+- **GET** returns the stored profile or a default `ActiveChargingProfile`
+- **DELETE** clears the profile and sends a `ClearProfileResult` callback
+- The simulation lifecycle respects `min_charging_rate` from active profiles to cap kWh growth
+
+## Data Model Enrichment
+
+Generated OCPI objects include spec-realistic detail:
+
+- **Locations** — `facilities`, `opening_times`, `charging_when_closed`, `energy_mix`
+- **Tariffs** — `tariff_alt_text`, `min_price`/`max_price`, `restrictions` on elements
+- **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions
+- **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `remark`
 
 ## Admin UI
 

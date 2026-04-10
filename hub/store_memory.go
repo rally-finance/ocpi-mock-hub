@@ -1,28 +1,39 @@
 package hub
 
-import "sync"
+import (
+	"encoding/json"
+	"sync"
+)
+
+const defaultPartyKey = "DEFAULT"
 
 type MemoryStore struct {
-	mu               sync.RWMutex
-	tokenB           string
-	emspCallbackURL string
-	emspCreds       []byte
-	emspOwnToken    string
-	emspVersionsURL string
-	tokens           map[string][]byte // key: "cc/pid/uid"
-	sessions         map[string][]byte // key: session ID
-	cdrs             map[string][]byte // key: CDR ID
-	reservations     map[string][]byte // key: reservation ID
-	mode             string
+	mu                sync.RWMutex
+	tokenB            string
+	emspCallbackURL  string
+	emspCreds        []byte
+	emspOwnToken     string
+	emspVersionsURL  string
+	parties           map[string][]byte  // key: "CC/PID" -> JSON
+	tokenBIndex       map[string]string  // tokenB -> party key
+	tokens            map[string][]byte      // key: "cc/pid/uid"
+	sessions          map[string][]byte      // key: session ID
+	cdrs              map[string][]byte      // key: CDR ID
+	reservations      map[string][]byte      // key: reservation ID
+	chargingProfiles  map[string][]byte      // key: session ID
+	mode              string
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		tokens:       make(map[string][]byte),
-		sessions:     make(map[string][]byte),
-		cdrs:         make(map[string][]byte),
-		reservations: make(map[string][]byte),
-		mode:         "happy",
+		parties:          make(map[string][]byte),
+		tokenBIndex:      make(map[string]string),
+		tokens:           make(map[string][]byte),
+		sessions:         make(map[string][]byte),
+		cdrs:             make(map[string][]byte),
+		reservations:     make(map[string][]byte),
+		chargingProfiles: make(map[string][]byte),
+		mode:             "happy",
 	}
 }
 
@@ -89,6 +100,63 @@ func (m *MemoryStore) SetEMSPVersionsURL(url string) error {
 	defer m.mu.Unlock()
 	m.emspVersionsURL = url
 	return nil
+}
+
+func (m *MemoryStore) PutParty(key string, state []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Remove old tokenB index entry
+	if old, ok := m.parties[key]; ok {
+		var prev struct{ TokenB string `json:"token_b"` }
+		if json.Unmarshal(old, &prev) == nil && prev.TokenB != "" {
+			delete(m.tokenBIndex, prev.TokenB)
+		}
+	}
+	m.parties[key] = state
+	var p struct{ TokenB string `json:"token_b"` }
+	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
+		m.tokenBIndex[p.TokenB] = key
+	}
+	return nil
+}
+
+func (m *MemoryStore) GetParty(key string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.parties[key], nil
+}
+
+func (m *MemoryStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	key, ok := m.tokenBIndex[tokenB]
+	if !ok {
+		return nil, nil
+	}
+	return m.parties[key], nil
+}
+
+func (m *MemoryStore) DeleteParty(key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if old, ok := m.parties[key]; ok {
+		var p struct{ TokenB string `json:"token_b"` }
+		if json.Unmarshal(old, &p) == nil && p.TokenB != "" {
+			delete(m.tokenBIndex, p.TokenB)
+		}
+	}
+	delete(m.parties, key)
+	return nil
+}
+
+func (m *MemoryStore) ListParties() ([][]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([][]byte, 0, len(m.parties))
+	for _, v := range m.parties {
+		result = append(result, v)
+	}
+	return result, nil
 }
 
 func tokenKey(cc, pid, uid string) string {
@@ -198,6 +266,26 @@ func (m *MemoryStore) DeleteReservation(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.reservations, id)
+	return nil
+}
+
+func (m *MemoryStore) PutChargingProfile(sessionID string, profile []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.chargingProfiles[sessionID] = profile
+	return nil
+}
+
+func (m *MemoryStore) GetChargingProfile(sessionID string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.chargingProfiles[sessionID], nil
+}
+
+func (m *MemoryStore) DeleteChargingProfile(sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.chargingProfiles, sessionID)
 	return nil
 }
 

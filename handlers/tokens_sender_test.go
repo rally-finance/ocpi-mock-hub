@@ -43,25 +43,31 @@ func testHandler() *Handler {
 }
 
 type testStore struct {
-	tokenB       string
-	callbackURL  string
-	creds        []byte
-	emspToken    string
-	versionsURL  string
-	tokens       map[string][]byte
-	sessions     map[string][]byte
-	cdrs         map[string][]byte
-	reservations map[string][]byte
-	mode         string
+	tokenB           string
+	callbackURL      string
+	creds            []byte
+	emspToken        string
+	versionsURL      string
+	tokens           map[string][]byte
+	sessions         map[string][]byte
+	cdrs             map[string][]byte
+	reservations     map[string][]byte
+	chargingProfiles map[string][]byte
+	parties          map[string][]byte
+	tokenBIndex      map[string]string
+	mode             string
 }
 
 func newTestStore() *testStore {
 	return &testStore{
-		tokens:       make(map[string][]byte),
-		sessions:     make(map[string][]byte),
-		cdrs:         make(map[string][]byte),
-		reservations: make(map[string][]byte),
-		mode:         "happy",
+		tokens:           make(map[string][]byte),
+		sessions:         make(map[string][]byte),
+		cdrs:             make(map[string][]byte),
+		reservations:     make(map[string][]byte),
+		chargingProfiles: make(map[string][]byte),
+		parties:          make(map[string][]byte),
+		tokenBIndex:      make(map[string]string),
+		mode:             "happy",
 	}
 }
 
@@ -113,8 +119,43 @@ func (s *testStore) ListReservations() ([][]byte, error) {
 	return r, nil
 }
 func (s *testStore) DeleteReservation(id string) error { delete(s.reservations, id); return nil }
-func (s *testStore) GetMode() (string, error)          { return s.mode, nil }
-func (s *testStore) SetMode(m string) error            { s.mode = m; return nil }
+func (s *testStore) PutChargingProfile(sessionID string, profile []byte) error {
+	s.chargingProfiles[sessionID] = profile
+	return nil
+}
+func (s *testStore) GetChargingProfile(sessionID string) ([]byte, error) {
+	return s.chargingProfiles[sessionID], nil
+}
+func (s *testStore) DeleteChargingProfile(sessionID string) error {
+	delete(s.chargingProfiles, sessionID)
+	return nil
+}
+func (s *testStore) PutParty(key string, state []byte) error {
+	s.parties[key] = state
+	var p struct{ TokenB string `json:"token_b"` }
+	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
+		s.tokenBIndex[p.TokenB] = key
+	}
+	return nil
+}
+func (s *testStore) GetParty(key string) ([]byte, error)    { return s.parties[key], nil }
+func (s *testStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
+	key, ok := s.tokenBIndex[tokenB]
+	if !ok {
+		return nil, nil
+	}
+	return s.parties[key], nil
+}
+func (s *testStore) DeleteParty(key string) error { delete(s.parties, key); return nil }
+func (s *testStore) ListParties() ([][]byte, error) {
+	r := make([][]byte, 0, len(s.parties))
+	for _, v := range s.parties {
+		r = append(r, v)
+	}
+	return r, nil
+}
+func (s *testStore) GetMode() (string, error) { return s.mode, nil }
+func (s *testStore) SetMode(m string) error   { s.mode = m; return nil }
 
 func withChiParams(r *http.Request, params map[string]string) *http.Request {
 	rctx := chi.NewRouteContext()

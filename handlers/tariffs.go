@@ -22,7 +22,7 @@ func (h *Handler) GetTariffs(w http.ResponseWriter, r *http.Request) {
 	from, to := ocpiutil.ParseDateRange(r)
 	tariffs = ocpiutil.FilterByLastUpdated(tariffs, func(t fakegen.Tariff) string { return t.LastUpdated }, from, to)
 
-	p := ocpiutil.ParsePaging(r, 50)
+	p := h.parsePaging(r, 50)
 	total := len(tariffs)
 	page := ocpiutil.PaginateSlice(tariffs, p)
 

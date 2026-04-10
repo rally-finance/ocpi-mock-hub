@@ -88,14 +88,17 @@ type SessionRecord struct {
 		Type       string `json:"type"`
 		ContractID string `json:"contract_id,omitempty"`
 	} `json:"cdr_token"`
-	AuthMethod  string  `json:"auth_method"`
-	LocationID  string  `json:"location_id"`
-	EvseUID     string  `json:"evse_uid"`
-	ConnectorID string  `json:"connector_id"`
-	Currency    string  `json:"currency"`
-	TotalCost   any     `json:"total_cost,omitempty"`
-	Status      string  `json:"status"`
-	LastUpdated string  `json:"last_updated"`
+	AuthMethod             string `json:"auth_method"`
+	AuthorizationReference string `json:"authorization_reference,omitempty"`
+	LocationID             string `json:"location_id"`
+	EvseUID                string `json:"evse_uid"`
+	ConnectorID            string `json:"connector_id"`
+	MeterID                string `json:"meter_id,omitempty"`
+	Currency               string `json:"currency"`
+	TotalCost              any    `json:"total_cost,omitempty"`
+	Status                 string `json:"status"`
+	ChargingPeriods        []any  `json:"charging_periods,omitempty"`
+	LastUpdated            string `json:"last_updated"`
 
 	// Internal fields for tick processing (not part of OCPI spec)
 	ResponseURL  string `json:"_response_url,omitempty"`
@@ -175,6 +178,7 @@ func (h *Handler) handleStartSession(w http.ResponseWriter, r *http.Request, mod
 		LocationID:    loc.ID,
 		EvseUID:       evseUID,
 		ConnectorID:   connectorID,
+		MeterID:       "METER-" + evseUID,
 		Currency:      "EUR",
 		LastUpdated:   now,
 		ResponseURL:   payload.ResponseURL,

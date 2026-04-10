@@ -14,17 +14,20 @@ The server starts on port 4000. OCPI versions URL: `http://localhost:4000/ocpi/v
 
 The mock behaves as an OCPI HUB (`DE*HUB`) with 5 fake CPO parties and ~50 charging locations across Europe. It supports the full OCPI 2.2.1 flow:
 
-1. **Handshake** — Token A → versions → credentials → Token B
-2. **Pull** — Locations, tariffs, sessions, CDRs, hub client info
-3. **Push** — Token registration from eMSP, location/tariff updates to eMSP
-4. **Commands** — START_SESSION / STOP_SESSION with async session lifecycle
+1. **Handshake** — Token A → versions → credentials → Token B (including PUT re-registration and DELETE unregister)
+2. **Pull** — Locations (with EVSE and connector sub-resources), tariffs, sessions, CDRs, hub client info — all with get-by-ID, date filtering, and paging
+3. **Push** — Token registration from eMSP, location/tariff/EVSE status updates to eMSP
+4. **Commands** — START_SESSION, STOP_SESSION, RESERVE_NOW, CANCEL_RESERVATION, UNLOCK_CONNECTOR with async lifecycle
+5. **Routing headers** — `OCPI-To-*` party filtering on all sender endpoints; `OCPI-From-*` set on all OCPI responses
 
-### Session Lifecycle
+### Session & EVSE Lifecycle
 
 When a START_SESSION command is received:
 - Session is created with status `PENDING`
 - After a configurable delay, callback is sent and session becomes `ACTIVE`
-- After configurable duration, session `COMPLETED` and a CDR is generated
+- The corresponding EVSE status is pushed as `CHARGING` to the eMSP
+- After configurable duration, session `COMPLETED`, a CDR is generated, and EVSE status is pushed back to `AVAILABLE`
+- GET endpoints dynamically overlay EVSE status based on active sessions
 
 In standalone mode, a background ticker handles this. On Vercel, a cron job (`/api/tick`) does it.
 
@@ -66,6 +69,52 @@ OCPI_TARGET_PARTY_ID=HUB
 ```
 
 Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP handshake.
+
+## OCPI Endpoints
+
+### Version Discovery
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/ocpi/versions` | Token A | List supported versions |
+| GET | `/ocpi/2.2.1` | Token A | Version 2.2.1 details and module endpoints |
+
+### Credentials
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/ocpi/2.2.1/credentials` | Token A | Register (initial handshake) |
+| GET | `/ocpi/2.2.1/credentials` | Token B | Get current credentials |
+| PUT | `/ocpi/2.2.1/credentials` | Token B | Re-register (rotates Token B) |
+| DELETE | `/ocpi/2.2.1/credentials` | Token B | Unregister (clears all handshake state) |
+
+### Sender Modules (hub → eMSP pull)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/ocpi/2.2.1/sender/locations` | Token B | List locations (paged, date-filtered, OCPI-To filtered) |
+| GET | `/ocpi/2.2.1/sender/locations/{locationID}` | Token B | Get single location |
+| GET | `/ocpi/2.2.1/sender/locations/{locationID}/{evseUID}` | Token B | Get single EVSE |
+| GET | `/ocpi/2.2.1/sender/locations/{locationID}/{evseUID}/{connectorID}` | Token B | Get single connector |
+| GET | `/ocpi/2.2.1/sender/tariffs` | Token B | List tariffs |
+| GET | `/ocpi/2.2.1/sender/tariffs/{cc}/{pid}/{tariffID}` | Token B | Get single tariff |
+| GET | `/ocpi/2.2.1/sender/sessions` | Token B | List sessions |
+| GET | `/ocpi/2.2.1/sender/sessions/{cc}/{pid}/{sessionID}` | Token B | Get single session |
+| GET | `/ocpi/2.2.1/sender/cdrs` | Token B | List CDRs |
+| GET | `/ocpi/2.2.1/sender/cdrs/{cc}/{pid}/{cdrID}` | Token B | Get single CDR |
+| GET | `/ocpi/2.2.1/sender/tokens` | Token B | List tokens |
+| GET | `/ocpi/2.2.1/sender/tokens/{cc}/{pid}/{uid}` | Token B | Get single token |
+| POST | `/ocpi/2.2.1/sender/tokens/{cc}/{pid}/{uid}/authorize` | Token B | Real-time authorization |
+| GET | `/ocpi/2.2.1/sender/hubclientinfo` | Token B | List connected parties |
+
+### Receiver Modules (eMSP → hub push)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/update a token |
+| POST | `/ocpi/2.2.1/receiver/commands/{command}` | Token B | Send a command |
+
+All sender list endpoints support `date_from`/`date_to` query parameters, `offset`/`limit` paging, and `OCPI-To-Country-Code`/`OCPI-To-Party-Id` header filtering.
 
 ## Admin UI
 

@@ -106,6 +106,44 @@ func TestStore_SessionCRUD(t *testing.T) {
 	}
 }
 
+func TestStore_CDRCRUD(t *testing.T) {
+	s := NewMemoryStore()
+
+	cdr := map[string]string{"id": "cdr-1", "country_code": "DE", "party_id": "AAA"}
+	data, _ := json.Marshal(cdr)
+
+	if err := s.PutCDR("cdr-1", data); err != nil {
+		t.Fatalf("PutCDR: %v", err)
+	}
+
+	got, err := s.GetCDR("cdr-1")
+	if err != nil {
+		t.Fatalf("GetCDR: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetCDR returned nil")
+	}
+
+	var decoded map[string]string
+	json.Unmarshal(got, &decoded)
+	if decoded["id"] != "cdr-1" {
+		t.Errorf("expected id=cdr-1, got %s", decoded["id"])
+	}
+
+	list, err := s.ListCDRs()
+	if err != nil {
+		t.Fatalf("ListCDRs: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("expected 1 CDR, got %d", len(list))
+	}
+
+	missing, _ := s.GetCDR("nonexistent")
+	if missing != nil {
+		t.Error("expected nil for missing CDR")
+	}
+}
+
 func TestStore_ModePersistence(t *testing.T) {
 	s := NewMemoryStore()
 

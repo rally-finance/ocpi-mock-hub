@@ -43,6 +43,7 @@ type Store interface {
 	ListSessions() ([][]byte, error)
 	DeleteSession(id string) error
 	PutCDR(id string, cdr []byte) error
+	GetCDR(id string) ([]byte, error)
 	ListCDRs() ([][]byte, error)
 	PutReservation(id string, reservation []byte) error
 	GetReservation(id string) ([]byte, error)

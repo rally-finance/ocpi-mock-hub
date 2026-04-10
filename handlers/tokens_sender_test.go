@@ -95,6 +95,7 @@ func (s *testStore) ListSessions() ([][]byte, error) {
 }
 func (s *testStore) DeleteSession(id string) error       { delete(s.sessions, id); return nil }
 func (s *testStore) PutCDR(id string, data []byte) error { s.cdrs[id] = data; return nil }
+func (s *testStore) GetCDR(id string) ([]byte, error)    { return s.cdrs[id], nil }
 func (s *testStore) ListCDRs() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.cdrs))
 	for _, v := range s.cdrs {

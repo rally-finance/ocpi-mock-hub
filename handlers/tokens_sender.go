@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
@@ -14,6 +15,13 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to list tokens")
 		return
+	}
+
+	toCountry := strings.ToUpper(r.Header.Get("OCPI-To-Country-Code"))
+	toParty := strings.ToUpper(r.Header.Get("OCPI-To-Party-Id"))
+	if toCountry != "" && toParty != "" &&
+		!(toCountry == h.Config.HubCountry && toParty == h.Config.HubParty) {
+		raw = filterRawByParty(raw, toCountry, toParty)
 	}
 
 	from, to := ocpiutil.ParseDateRange(r)

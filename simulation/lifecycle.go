@@ -201,6 +201,20 @@ func (s *Simulator) advancePendingToActive(session *sessionRecord, emspURL strin
 		s.pushToEMSP("PUT", url, session)
 	}
 
+	// Push EVSE status -> CHARGING
+	if emspURL != "" && s.seed != nil && session.LocationID != "" && session.EvseUID != "" {
+		loc, evse := s.seed.EVSEByUID(session.LocationID, session.EvseUID)
+		if loc != nil && evse != nil {
+			evseURL := fmt.Sprintf("%s/receiver/locations/%s/%s/%s/%s",
+				emspURL, loc.CountryCode, loc.PartyID, loc.ID, evse.UID)
+			evseUpdate := map[string]string{
+				"status":       "CHARGING",
+				"last_updated": now.Format(time.RFC3339),
+			}
+			s.pushToEMSP("PUT", evseURL, evseUpdate)
+		}
+	}
+
 	log.Printf("[tick] session %s: PENDING -> ACTIVE", session.ID)
 }
 
@@ -295,6 +309,20 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 
 		cdrURL := fmt.Sprintf("%s/receiver/cdrs/%s", emspURL, cdrID)
 		s.pushToEMSP("POST", cdrURL, cdr)
+	}
+
+	// Push EVSE status -> AVAILABLE
+	if emspURL != "" && s.seed != nil && session.LocationID != "" && session.EvseUID != "" {
+		loc, evse := s.seed.EVSEByUID(session.LocationID, session.EvseUID)
+		if loc != nil && evse != nil {
+			evseURL := fmt.Sprintf("%s/receiver/locations/%s/%s/%s/%s",
+				emspURL, loc.CountryCode, loc.PartyID, loc.ID, evse.UID)
+			evseUpdate := map[string]string{
+				"status":       "AVAILABLE",
+				"last_updated": nowStr,
+			}
+			s.pushToEMSP("PUT", evseURL, evseUpdate)
+		}
 	}
 
 	log.Printf("[tick] session %s: %s -> COMPLETED (CDR %s, %.1f kWh)", session.ID, prevStatus, cdrID, session.KWH)

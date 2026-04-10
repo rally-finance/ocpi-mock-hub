@@ -71,6 +71,34 @@ func (s *SeedData) TariffsByParty(cc, pid string) []Tariff {
 	return result
 }
 
+// EVSEByUID returns a location and EVSE from the seed by location ID and EVSE UID.
+func (s *SeedData) EVSEByUID(locationID, evseUID string) (*Location, *EVSE) {
+	loc := s.LocationByID(locationID)
+	if loc == nil {
+		return nil, nil
+	}
+	for i := range loc.EVSEs {
+		if loc.EVSEs[i].UID == evseUID {
+			return loc, &loc.EVSEs[i]
+		}
+	}
+	return loc, nil
+}
+
+// ConnectorByID returns a location, EVSE, and connector from the seed.
+func (s *SeedData) ConnectorByID(locationID, evseUID, connectorID string) (*Location, *EVSE, *Connector) {
+	loc, evse := s.EVSEByUID(locationID, evseUID)
+	if evse == nil {
+		return loc, nil, nil
+	}
+	for i := range evse.Connectors {
+		if evse.Connectors[i].ID == connectorID {
+			return loc, evse, &evse.Connectors[i]
+		}
+	}
+	return loc, evse, nil
+}
+
 // TariffByID returns a tariff from the seed by composite key.
 func (s *SeedData) TariffByID(cc, pid, id string) *Tariff {
 	for i := range s.Tariffs {

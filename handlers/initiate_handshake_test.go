@@ -69,6 +69,7 @@ func (s *handshakeTestStore) ListSessions() ([][]byte, error) {
 }
 func (s *handshakeTestStore) DeleteSession(id string) error      { delete(s.sessions, id); return nil }
 func (s *handshakeTestStore) PutCDR(id string, cdr []byte) error { s.cdrs[id] = cdr; return nil }
+func (s *handshakeTestStore) GetCDR(id string) ([]byte, error)  { return s.cdrs[id], nil }
 func (s *handshakeTestStore) ListCDRs() ([][]byte, error) {
 	var out [][]byte
 	for _, v := range s.cdrs {

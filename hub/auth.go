@@ -31,7 +31,7 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 
 			if path == "/ocpi/versions" ||
 				path == "/ocpi/2.2.1" ||
-				path == "/ocpi/2.2.1/credentials" ||
+				(path == "/ocpi/2.2.1/credentials" && r.Method == "POST") ||
 				path == "/admin" ||
 				strings.HasPrefix(path, "/admin/") ||
 				strings.HasPrefix(path, "/api/tick") ||

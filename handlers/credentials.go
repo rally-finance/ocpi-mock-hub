@@ -94,6 +94,76 @@ func (h *Handler) PostCredentials(w http.ResponseWriter, r *http.Request) {
 	ocpiutil.OK(w, r, response)
 }
 
+func (h *Handler) PutCredentials(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read request body")
+		return
+	}
+
+	var creds credentialsPayload
+	if err := json.Unmarshal(body, &creds); err != nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Invalid JSON payload")
+		return
+	}
+
+	if creds.Token == "" {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams, "Token is required")
+		return
+	}
+
+	h.Store.SetEMSPCredentials(body)
+	h.Store.SetEMSPOwnToken(creds.Token)
+	if creds.URL != "" {
+		h.Store.SetEMSPCallbackURL(creds.URL)
+	}
+
+	newTokenB := uuid.NewString()
+	h.Store.SetTokenB(newTokenB)
+
+	scheme := resolveScheme(r)
+	host := resolveHost(r)
+
+	response := credentialsPayload{
+		Token:       newTokenB,
+		URL:         scheme + "://" + host + "/ocpi/versions",
+		CountryCode: h.Config.HubCountry,
+		PartyID:     h.Config.HubParty,
+		BusinessDetails: &struct {
+			Name string `json:"name,omitempty"`
+		}{Name: "OCPI Mock Hub"},
+		Roles: []struct {
+			Role            string `json:"role"`
+			PartyID         string `json:"party_id"`
+			CountryCode     string `json:"country_code"`
+			BusinessDetails *struct {
+				Name string `json:"name,omitempty"`
+			} `json:"business_details,omitempty"`
+		}{
+			{
+				Role:        "HUB",
+				PartyID:     h.Config.HubParty,
+				CountryCode: h.Config.HubCountry,
+				BusinessDetails: &struct {
+					Name string `json:"name,omitempty"`
+				}{Name: "OCPI Mock Hub"},
+			},
+		},
+	}
+
+	ocpiutil.OK(w, r, response)
+}
+
+func (h *Handler) DeleteCredentials(w http.ResponseWriter, r *http.Request) {
+	h.Store.SetTokenB("")
+	h.Store.SetEMSPCallbackURL("")
+	h.Store.SetEMSPCredentials(nil)
+	h.Store.SetEMSPOwnToken("")
+	h.Store.SetEMSPVersionsURL("")
+
+	ocpiutil.OK(w, r, nil)
+}
+
 func (h *Handler) GetCredentials(w http.ResponseWriter, r *http.Request) {
 	tokenB, _ := h.Store.GetTokenB()
 	if tokenB == "" {

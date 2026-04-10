@@ -210,6 +210,75 @@ func TestCancelReservation_NotFound(t *testing.T) {
 	}
 }
 
+func TestStopSession_EmptySessionID(t *testing.T) {
+	h := testHandler()
+
+	body := `{}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/commands/STOP_SESSION", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"command": "STOP_SESSION"})
+
+	h.PostCommand(w, r)
+
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var result map[string]string
+	json.Unmarshal(resp.Data, &result)
+	if result["result"] != "REJECTED" {
+		t.Errorf("expected REJECTED for empty session_id, got %s", result["result"])
+	}
+}
+
+func TestStopSession_NonexistentSession(t *testing.T) {
+	h := testHandler()
+
+	body := `{"session_id":"DOES-NOT-EXIST"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/commands/STOP_SESSION", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"command": "STOP_SESSION"})
+
+	h.PostCommand(w, r)
+
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var result map[string]string
+	json.Unmarshal(resp.Data, &result)
+	if result["result"] != "REJECTED" {
+		t.Errorf("expected REJECTED for nonexistent session, got %s", result["result"])
+	}
+}
+
+func TestStopSession_ResponseURLReset(t *testing.T) {
+	h := testHandler()
+
+	startBody := `{"location_id":"LOC-1","response_url":"http://localhost/start-cb","token":{"uid":"TOK1"}}`
+	w1 := httptest.NewRecorder()
+	r1 := httptest.NewRequest("POST", "/commands/START_SESSION", strings.NewReader(startBody))
+	r1 = withChiParams(r1, map[string]string{"command": "START_SESSION"})
+	h.PostCommand(w1, r1)
+
+	sessions, _ := h.Store.ListSessions()
+	var sess SessionRecord
+	json.Unmarshal(sessions[0], &sess)
+
+	stopBody := `{"session_id":"` + sess.ID + `","response_url":"http://localhost/stop-cb"}`
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest("POST", "/commands/STOP_SESSION", strings.NewReader(stopBody))
+	r2 = withChiParams(r2, map[string]string{"command": "STOP_SESSION"})
+	h.PostCommand(w2, r2)
+
+	raw, _ := h.Store.GetSession(sess.ID)
+	var updated SessionRecord
+	json.Unmarshal(raw, &updated)
+
+	if updated.ResponseURL != "http://localhost/stop-cb" {
+		t.Errorf("expected ResponseURL updated to stop-cb, got %s", updated.ResponseURL)
+	}
+	if updated.CallbackSent {
+		t.Error("expected CallbackSent reset to false after STOP_SESSION with new ResponseURL")
+	}
+}
+
 func TestUnlockConnector_Happy(t *testing.T) {
 	h := testHandler()
 

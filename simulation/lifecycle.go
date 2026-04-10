@@ -32,6 +32,8 @@ type Store interface {
 	GetMode() (string, error)
 }
 
+var pushClient = &http.Client{Timeout: 10 * time.Second}
+
 type Simulator struct {
 	store            Store
 	seed             *fakegen.SeedData
@@ -396,7 +398,7 @@ func (s *Simulator) pushToEMSP(method, url string, payload any) {
 		req.Header.Set("Authorization", "Token "+s.authToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := pushClient.Do(req)
 	if err != nil {
 		log.Printf("[push] %s -> error: %v", url, err)
 		return

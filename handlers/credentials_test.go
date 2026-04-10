@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+func TestPostCredentials_StoresOwnToken(t *testing.T) {
+	h := testHandler()
+
+	body := `{"token":"emsp-push-token","url":"https://emsp.example.com/ocpi/versions"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/ocpi/2.2.1/credentials", strings.NewReader(body))
+	r.Header.Set("Authorization", "Token test-token-a")
+
+	h.PostCredentials(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	store := h.Store.(*testStore)
+	emspToken, _ := store.GetEMSPOwnToken()
+	if emspToken != "emsp-push-token" {
+		t.Errorf("expected eMSP own token stored as 'emsp-push-token', got %q", emspToken)
+	}
+
+	callbackURL, _ := store.GetEMSPCallbackURL()
+	if callbackURL != "https://emsp.example.com/ocpi/versions" {
+		t.Errorf("expected callback URL stored, got %q", callbackURL)
+	}
+
+	tokenB, _ := store.GetTokenB()
+	if tokenB == "" {
+		t.Error("expected Token B to be generated")
+	}
+}
+
 func TestPutCredentials_Happy(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

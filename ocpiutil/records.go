@@ -27,8 +27,12 @@ type SessionRecord struct {
 	LastUpdated            string `json:"last_updated"`
 
 	// Internal fields for tick processing (not part of OCPI spec).
-	ResponseURL  string `json:"_response_url,omitempty"`
-	CreatedAt    string `json:"_created_at,omitempty"`
-	ActivatedAt  string `json:"_activated_at,omitempty"`
-	CallbackSent bool   `json:"_callback_sent,omitempty"`
+	ResponseURL string `json:"_response_url,omitempty"`
+	CreatedAt   string `json:"_created_at,omitempty"`
+	ActivatedAt string `json:"_activated_at,omitempty"`
+	// CallbackSent tracks whether the async command-result callback has been
+	// posted to ResponseURL.  It is set to true after the PENDING→ACTIVE
+	// callback and reset to false by STOP_SESSION when a new ResponseURL is
+	// provided, so the STOPPING→COMPLETED callback fires separately.
+	CallbackSent bool `json:"_callback_sent,omitempty"`
 }

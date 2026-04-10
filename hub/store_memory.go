@@ -155,6 +155,12 @@ func (m *MemoryStore) PutCDR(id string, cdr []byte) error {
 	return nil
 }
 
+func (m *MemoryStore) GetCDR(id string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cdrs[id], nil
+}
+
 func (m *MemoryStore) ListCDRs() ([][]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

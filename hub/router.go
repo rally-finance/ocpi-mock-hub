@@ -3,6 +3,7 @@ package hub
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,6 +18,7 @@ func NewRouter(app *App) http.Handler {
 
 	reqLog := handlers.NewRequestLog()
 	r.Use(handlers.RequestLogMiddleware(reqLog))
+	r.Use(ocpiFromHeadersMiddleware(app.Config.HubCountry, app.Config.HubParty))
 	r.Use(TokenAuthMiddleware(app))
 
 	h := handlers.New(handlers.HandlerConfig{
@@ -37,14 +39,20 @@ func NewRouter(app *App) http.Handler {
 	// OCPI credentials
 	r.Post("/ocpi/2.2.1/credentials", h.PostCredentials)
 	r.Get("/ocpi/2.2.1/credentials", h.GetCredentials)
+	r.Put("/ocpi/2.2.1/credentials", h.PutCredentials)
+	r.Delete("/ocpi/2.2.1/credentials", h.DeleteCredentials)
 
 	// OCPI sender modules (hub pushes data to eMSP)
 	r.Get("/ocpi/2.2.1/sender/locations", h.GetLocations)
 	r.Get("/ocpi/2.2.1/sender/locations/{locationID}", h.GetLocation)
+	r.Get("/ocpi/2.2.1/sender/locations/{locationID}/{evseUID}", h.GetEVSE)
+	r.Get("/ocpi/2.2.1/sender/locations/{locationID}/{evseUID}/{connectorID}", h.GetConnector)
 	r.Get("/ocpi/2.2.1/sender/tariffs", h.GetTariffs)
 	r.Get("/ocpi/2.2.1/sender/tariffs/{countryCode}/{partyID}/{tariffID}", h.GetTariff)
 	r.Get("/ocpi/2.2.1/sender/sessions", h.GetSessions)
+	r.Get("/ocpi/2.2.1/sender/sessions/{countryCode}/{partyID}/{sessionID}", h.GetSessionByID)
 	r.Get("/ocpi/2.2.1/sender/cdrs", h.GetCDRs)
+	r.Get("/ocpi/2.2.1/sender/cdrs/{countryCode}/{partyID}/{cdrID}", h.GetCDRByID)
 	r.Get("/ocpi/2.2.1/sender/tokens", h.GetTokens)
 	r.Get("/ocpi/2.2.1/sender/tokens/{countryCode}/{partyID}/{uid}", h.GetTokenByID)
 	r.Post("/ocpi/2.2.1/sender/tokens/{countryCode}/{partyID}/{uid}/authorize", h.PostTokenAuthorize)
@@ -86,6 +94,18 @@ func NewRouter(app *App) http.Handler {
 	})
 
 	return r
+}
+
+func ocpiFromHeadersMiddleware(hubCountry, hubParty string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/ocpi/") {
+				w.Header().Set("OCPI-From-Country-Code", hubCountry)
+				w.Header().Set("OCPI-From-Party-Id", hubParty)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func serveAdminHTML(w http.ResponseWriter, r *http.Request) {

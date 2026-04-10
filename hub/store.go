@@ -29,6 +29,7 @@ type Store interface {
 
 	// CDRs (generated on session completion)
 	PutCDR(id string, cdr []byte) error
+	GetCDR(id string) ([]byte, error)
 	ListCDRs() ([][]byte, error)
 
 	// Reservations (created by RESERVE_NOW, expired by tick)

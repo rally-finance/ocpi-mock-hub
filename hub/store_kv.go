@@ -162,6 +162,14 @@ func (r *RedisStore) PutCDR(id string, cdr []byte) error {
 	return r.set("cdr:"+id, string(cdr))
 }
 
+func (r *RedisStore) GetCDR(id string) ([]byte, error) {
+	v, err := r.get("cdr:" + id)
+	if v == "" {
+		return nil, err
+	}
+	return []byte(v), err
+}
+
 func (r *RedisStore) ListCDRs() ([][]byte, error) {
 	return r.listByPrefix("cdr:*")
 }

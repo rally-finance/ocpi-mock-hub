@@ -31,7 +31,16 @@ func (h *Handler) PostCredentials(w http.ResponseWriter, r *http.Request) {
 	if !h.verifyTokenA(w, r) {
 		return
 	}
+	h.registerCredentials(w, r)
+}
 
+func (h *Handler) PutCredentials(w http.ResponseWriter, r *http.Request) {
+	h.registerCredentials(w, r)
+}
+
+// registerCredentials contains the shared logic for POST and PUT /credentials:
+// parse payload, store eMSP credentials, rotate Token B, return hub credentials.
+func (h *Handler) registerCredentials(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read request body")
@@ -49,15 +58,12 @@ func (h *Handler) PostCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store eMSP's credentials, callback URL, and the token the hub
-	// should use when pushing data back to the eMSP.
 	h.Store.SetEMSPCredentials(body)
 	h.Store.SetEMSPOwnToken(creds.Token)
 	if creds.URL != "" {
 		h.Store.SetEMSPCallbackURL(creds.URL)
 	}
 
-	// Generate Token B for eMSP to use on subsequent requests.
 	tokenB := uuid.NewString()
 	h.Store.SetTokenB(tokenB)
 
@@ -92,6 +98,16 @@ func (h *Handler) PostCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ocpiutil.OK(w, r, response)
+}
+
+func (h *Handler) DeleteCredentials(w http.ResponseWriter, r *http.Request) {
+	h.Store.SetTokenB("")
+	h.Store.SetEMSPCallbackURL("")
+	h.Store.SetEMSPCredentials(nil)
+	h.Store.SetEMSPOwnToken("")
+	h.Store.SetEMSPVersionsURL("")
+
+	ocpiutil.OK(w, r, nil)
 }
 
 func (h *Handler) GetCredentials(w http.ResponseWriter, r *http.Request) {

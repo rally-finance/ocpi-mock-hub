@@ -5,9 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 )
 
 type mockStore struct {
@@ -224,6 +227,197 @@ func TestTick_ReservationCallback(t *testing.T) {
 
 	if atomic.LoadInt32(&callbackCount) != 1 {
 		t.Errorf("expected 1 callback, got %d", callbackCount)
+	}
+}
+
+func TestTick_EVSEStatusChangeOnActivation(t *testing.T) {
+	var evseStatusPushed string
+	var evseUIDPushed string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/receiver/locations/") {
+			body, _ := io.ReadAll(r.Body)
+			var update map[string]any
+			json.Unmarshal(body, &update)
+			if s, ok := update["status"].(string); ok {
+				evseStatusPushed = s
+			}
+			if u, ok := update["uid"].(string); ok {
+				evseUIDPushed = u
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	seed := &fakegen.SeedData{
+		Locations: []fakegen.Location{
+			{
+				CountryCode: "DE",
+				PartyID:     "AAA",
+				ID:          "LOC-1",
+				EVSEs: []fakegen.EVSE{{
+					UID:    "EVSE-1",
+					Status: "AVAILABLE",
+					Connectors: []fakegen.Connector{
+						{ID: "C1", Standard: "IEC_62196_T2"},
+					},
+				}},
+			},
+		},
+	}
+
+	store := newMockStore()
+	store.callbackURL = ts.URL
+	store.emspToken = "test-token"
+
+	past := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-EVSE",
+		StartDateTime: past,
+		Status:        "PENDING",
+		CreatedAt:     past,
+		LocationID:    "LOC-1",
+		EvseUID:       "EVSE-1",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-EVSE", data)
+
+	sim := New(store, seed, ts.URL, 100, 60)
+	sim.Tick()
+
+	if evseStatusPushed != "CHARGING" {
+		t.Errorf("expected EVSE status push CHARGING, got %q", evseStatusPushed)
+	}
+	if evseUIDPushed != "EVSE-1" {
+		t.Errorf("expected full EVSE object with uid EVSE-1, got %q", evseUIDPushed)
+	}
+}
+
+func TestTick_EVSEStatusChangeOnCompletion(t *testing.T) {
+	var evseStatusPushed string
+	var evseUIDPushed string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/receiver/locations/") {
+			body, _ := io.ReadAll(r.Body)
+			var update map[string]any
+			json.Unmarshal(body, &update)
+			if s, ok := update["status"].(string); ok {
+				evseStatusPushed = s
+			}
+			if u, ok := update["uid"].(string); ok {
+				evseUIDPushed = u
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	seed := &fakegen.SeedData{
+		Locations: []fakegen.Location{
+			{
+				CountryCode: "DE",
+				PartyID:     "AAA",
+				ID:          "LOC-1",
+				EVSEs: []fakegen.EVSE{{
+					UID:    "EVSE-1",
+					Status: "AVAILABLE",
+					Connectors: []fakegen.Connector{
+						{ID: "C1", Standard: "IEC_62196_T2"},
+					},
+				}},
+			},
+		},
+	}
+
+	store := newMockStore()
+	store.callbackURL = ts.URL
+	store.emspToken = "test-token"
+
+	past := time.Now().UTC().Add(-120 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:   "DE",
+		PartyID:       "AAA",
+		ID:            "SESS-EVSE2",
+		StartDateTime: past,
+		Status:        "ACTIVE",
+		CreatedAt:     past,
+		ActivatedAt:   past,
+		LocationID:    "LOC-1",
+		EvseUID:       "EVSE-1",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-EVSE2", data)
+
+	sim := New(store, seed, ts.URL, 100, 5)
+	sim.Tick()
+
+	if evseStatusPushed != "AVAILABLE" {
+		t.Errorf("expected EVSE status push AVAILABLE, got %q", evseStatusPushed)
+	}
+	if evseUIDPushed != "EVSE-1" {
+		t.Errorf("expected full EVSE object with uid EVSE-1, got %q", evseUIDPushed)
+	}
+}
+
+func TestTick_EVSENotSetAvailableWhenOtherSessionActive(t *testing.T) {
+	var evseStatusPushed string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/receiver/locations/") {
+			body, _ := io.ReadAll(r.Body)
+			var update map[string]any
+			json.Unmarshal(body, &update)
+			if s, ok := update["status"].(string); ok {
+				evseStatusPushed = s
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	seed := &fakegen.SeedData{
+		Locations: []fakegen.Location{
+			{
+				CountryCode: "DE",
+				PartyID:     "AAA",
+				ID:          "LOC-1",
+				EVSEs:       []fakegen.EVSE{{UID: "EVSE-1", Status: "AVAILABLE"}},
+			},
+		},
+	}
+
+	store := newMockStore()
+	store.callbackURL = ts.URL
+	store.emspToken = "test-token"
+
+	past := time.Now().UTC().Add(-120 * time.Second).Format(time.RFC3339)
+
+	// Session being completed
+	s1 := sessionRecord{
+		CountryCode: "DE", PartyID: "AAA", ID: "SESS-A",
+		StartDateTime: past, Status: "ACTIVE", CreatedAt: past,
+		ActivatedAt: past, LocationID: "LOC-1", EvseUID: "EVSE-1",
+	}
+	d1, _ := json.Marshal(s1)
+	store.PutSession("SESS-A", d1)
+
+	// Another active session on the same EVSE
+	s2 := sessionRecord{
+		CountryCode: "DE", PartyID: "AAA", ID: "SESS-B",
+		StartDateTime: past, Status: "ACTIVE", CreatedAt: past,
+		ActivatedAt: time.Now().UTC().Format(time.RFC3339),
+		LocationID: "LOC-1", EvseUID: "EVSE-1",
+	}
+	d2, _ := json.Marshal(s2)
+	store.PutSession("SESS-B", d2)
+
+	sim := New(store, seed, ts.URL, 100, 5)
+	sim.Tick()
+
+	// SESS-A completes but SESS-B is still active, so EVSE should NOT be pushed as AVAILABLE
+	if evseStatusPushed == "AVAILABLE" {
+		t.Error("should not push AVAILABLE when another session is still active on the same EVSE")
 	}
 }
 

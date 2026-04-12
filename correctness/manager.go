@@ -509,6 +509,7 @@ func nextStep(suite SuiteDefinition, session TestSession) SessionStep {
 		caseMap[item.ID] = item
 	}
 
+	var blockedStep *SessionStep
 	for _, def := range suite.Cases {
 		result := caseMap[def.ID]
 		switch result.Status {
@@ -530,6 +531,16 @@ func nextStep(suite SuiteDefinition, session TestSession) SessionStep {
 				Description: firstMessage(result.Messages),
 				CaseID:      result.ID,
 			}
+		case "blocked":
+			if blockedStep == nil {
+				step := SessionStep{
+					Title:       result.Title,
+					Description: firstMessage(result.Messages),
+					CaseID:      result.ID,
+				}
+				blockedStep = &step
+			}
+			continue
 		default:
 			for _, actionID := range def.ActionIDs {
 				action := actionMap[actionID]
@@ -556,6 +567,9 @@ func nextStep(suite SuiteDefinition, session TestSession) SessionStep {
 				CaseID:      result.ID,
 			}
 		}
+	}
+	if blockedStep != nil {
+		return *blockedStep
 	}
 
 	return SessionStep{

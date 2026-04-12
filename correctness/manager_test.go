@@ -210,3 +210,95 @@ func TestManagerRerunCreatesFreshSandbox(t *testing.T) {
 		t.Fatalf("expected rerun sandbox address %q, got %q", originalAddress, got)
 	}
 }
+
+func TestNextStepSkipsBlockedCaseActions(t *testing.T) {
+	suite := SuiteDefinition{
+		Cases: []CaseDefinition{
+			{
+				ID:        "blocked_case",
+				Title:     "Blocked Case",
+				ActionIDs: []string{"blocked_action"},
+			},
+			{
+				ID:        "ready_case",
+				Title:     "Ready Case",
+				ActionIDs: []string{"ready_action"},
+			},
+		},
+	}
+	session := TestSession{
+		Actions: []ActionState{
+			{
+				ID:          "blocked_action",
+				Title:       "Blocked Action",
+				Description: "Should not be suggested yet.",
+				Status:      "idle",
+			},
+			{
+				ID:          "ready_action",
+				Title:       "Ready Action",
+				Description: "This is the actionable next step.",
+				Status:      "idle",
+			},
+		},
+		Cases: []CaseResult{
+			{
+				ID:       "blocked_case",
+				Title:    "Blocked Case",
+				Status:   "blocked",
+				Messages: []string{"Waiting for a prerequisite to pass first."},
+			},
+			{
+				ID:     "ready_case",
+				Title:  "Ready Case",
+				Status: "pending",
+			},
+		},
+	}
+
+	step := nextStep(suite, session)
+	if step.ActionID != "ready_action" {
+		t.Fatalf("expected ready_action to be suggested, got %#v", step)
+	}
+}
+
+func TestNextStepFallsBackToBlockedMessageWhenNothingElseIsActionable(t *testing.T) {
+	suite := SuiteDefinition{
+		Cases: []CaseDefinition{
+			{
+				ID:        "blocked_case",
+				Title:     "Blocked Case",
+				ActionIDs: []string{"blocked_action"},
+			},
+		},
+	}
+	session := TestSession{
+		Actions: []ActionState{
+			{
+				ID:          "blocked_action",
+				Title:       "Blocked Action",
+				Description: "Should remain blocked.",
+				Status:      "idle",
+			},
+		},
+		Cases: []CaseResult{
+			{
+				ID:       "blocked_case",
+				Title:    "Blocked Case",
+				Status:   "blocked",
+				Messages: []string{"Waiting for a prerequisite to pass first."},
+			},
+		},
+	}
+
+	step := nextStep(suite, session)
+	if step.ActionID != "" {
+		t.Fatalf("expected no actionable step for blocked-only session, got %#v", step)
+	}
+	if step.CaseID != "blocked_case" {
+		t.Fatalf("expected blocked case fallback, got %#v", step)
+	}
+	if step.Description != "Waiting for a prerequisite to pass first." {
+		t.Fatalf("expected blocked message, got %#v", step)
+	}
+}

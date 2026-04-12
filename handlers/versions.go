@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
@@ -57,40 +55,24 @@ func (h *Handler) GetVersionDetails(w http.ResponseWriter, r *http.Request) {
 // Returns true if valid, writes an error response and returns false otherwise.
 // Also accepts Token B if the handshake is already done (for GET requests).
 func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
-	provided := parseAuthToken(r.Header.Get("Authorization"))
-	if provided == "" {
+	authHeader := r.Header.Get("Authorization")
+	if len(ocpiutil.AuthTokenCandidates(authHeader)) == 0 {
 		ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Missing authorization token")
 		return false
 	}
 
-	if provided == h.Config.TokenA {
+	if ocpiutil.AuthHeaderMatchesToken(authHeader, h.Config.TokenA) {
 		return true
 	}
 
 	// Also accept Token B for already-handshaked clients querying versions.
 	tokenB, _ := h.storeForRequest(r).GetTokenB()
-	if tokenB != "" && provided == tokenB {
+	if tokenB != "" && ocpiutil.AuthHeaderMatchesToken(authHeader, tokenB) {
 		return true
 	}
 
 	ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Invalid authorization token")
 	return false
-}
-
-func parseAuthToken(header string) string {
-	if header == "" {
-		return ""
-	}
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "token") {
-		return ""
-	}
-	raw := strings.TrimSpace(parts[1])
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err == nil && len(decoded) > 0 {
-		return string(decoded)
-	}
-	return raw
 }
 
 func resolveScheme(r *http.Request) string {

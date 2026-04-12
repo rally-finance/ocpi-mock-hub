@@ -131,11 +131,7 @@ func evalPullLocationsDeltaUpdate(rt *sessionRuntime, def CaseDefinition) CaseEv
 		return *failed
 	}
 	expectedID := action.Output["location_id"]
-	eval := evalInboundPaginatedPull(rt, action.ID, "/ocpi/2.2.1/sender/locations", true, "location", expectedID)
-	if eval.Status != "passed" {
-		return eval
-	}
-	return eval
+	return evalInboundPaginatedPull(rt, action.ID, "/ocpi/2.2.1/sender/locations", true, "location", expectedID)
 }
 
 func evalPullLocationsFullDeleteConnector(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {

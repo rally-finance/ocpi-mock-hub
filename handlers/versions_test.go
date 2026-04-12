@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -54,5 +55,24 @@ func TestGetVersionsUsesXRallyForwardedHost(t *testing.T) {
 	}
 	if want := "https://x-rally.example/ocpi/2.2.1"; body.Data[0].URL != want {
 		t.Fatalf("unexpected version URL, want %q got %q", want, body.Data[0].URL)
+	}
+}
+
+func TestGetVersionsAcceptsLiteralBase64LookingTokenA(t *testing.T) {
+	h := &Handler{
+		Config: HandlerConfig{
+			TokenA: "dG9rZW4tYS0xMjM=",
+		},
+	}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/versions", nil)
+	req.Host = "inner.example"
+	req.Header.Set("Authorization", "Token dG9rZW4tYS0xMjM=")
+
+	rr := httptest.NewRecorder()
+	h.GetVersions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
 	}
 }

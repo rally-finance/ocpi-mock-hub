@@ -93,3 +93,37 @@ func TestShouldCaptureOutboundRequestOnlyForCorrectnessActionOrCallback(t *testi
 		t.Fatal("expected unrelated outbound traffic without action metadata to be ignored")
 	}
 }
+
+func TestMatchesInboundRequestAcceptsLiteralBase64LookingToken(t *testing.T) {
+	manager := NewManager(testSeed())
+	session, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	overlay := manager.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	const token = "dG9rZW4tYi0xMjM="
+	if err := overlay.SetTokenB(token); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+	if err := manager.SetPeerState(session.ID, SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "http://hub.example.com/ocpi/2.2.1/sender/locations", nil)
+	req.Header.Set("Authorization", "Token "+token)
+	req.Header.Set("OCPI-From-Country-Code", "NL")
+	req.Header.Set("OCPI-From-Party-Id", "EMS")
+	if !manager.MatchesInboundRequest(req) {
+		t.Fatal("expected literal base64-looking token to match the active correctness session")
+	}
+}

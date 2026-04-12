@@ -127,6 +127,22 @@ func TestPostCredentials_StillExemptFromTokenB(t *testing.T) {
 	}
 }
 
+func TestTokenAuthMiddlewareAcceptsLiteralBase64LookingTokenB(t *testing.T) {
+	app := testApp()
+	app.Store.SetTokenB("dG9rZW4tYi0xMjM=")
+	router := NewRouter(app)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/locations", nil)
+	r.Header.Set("Authorization", "Token dG9rZW4tYi0xMjM=")
+
+	router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /sender/locations with literal base64-looking Token B: got %d, want 200", w.Code)
+	}
+}
+
 func TestOCPIFromHeaders_SetOnOCPIResponse(t *testing.T) {
 	app := testApp()
 	app.Store.SetTokenB("valid-token-b")

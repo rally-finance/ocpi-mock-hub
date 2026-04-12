@@ -1,11 +1,12 @@
 package correctness
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
 func (m *Manager) MatchesInboundRequest(r *http.Request) bool {
@@ -21,12 +22,11 @@ func (m *Manager) MatchesInboundRequest(r *http.Request) bool {
 		return false
 	}
 
-	provided := parseAuthToken(r.Header.Get("Authorization"))
-	if provided == "" {
+	if len(ocpiutil.AuthTokenCandidates(r.Header.Get("Authorization"))) == 0 {
 		return false
 	}
 
-	return inboundRequestMatchesSession(rt, provided, r.Header.Get("OCPI-From-Country-Code"), r.Header.Get("OCPI-From-Party-Id"))
+	return inboundRequestMatchesSession(rt, r.Header.Get("Authorization"), r.Header.Get("OCPI-From-Country-Code"), r.Header.Get("OCPI-From-Party-Id"))
 }
 
 func (m *Manager) ShouldCaptureInboundRequest(r *http.Request) bool {
@@ -58,13 +58,13 @@ func (m *Manager) ShouldCaptureOutboundRequest(req *http.Request) bool {
 	return isSessionCallbackURL(rt, target) && outboundRequestMatchesSessionToken(rt, req)
 }
 
-func inboundRequestMatchesSession(rt *sessionRuntime, providedToken, fromCountry, fromParty string) bool {
+func inboundRequestMatchesSession(rt *sessionRuntime, authHeader, fromCountry, fromParty string) bool {
 	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
 		return false
 	}
 
 	tokenB, _ := rt.sandbox.Store.GetTokenB()
-	if tokenB == "" || providedToken != tokenB {
+	if tokenB == "" || !ocpiutil.AuthHeaderMatchesToken(authHeader, tokenB) {
 		return false
 	}
 
@@ -105,7 +105,7 @@ func outboundRequestMatchesSessionToken(rt *sessionRuntime, req *http.Request) b
 		return true
 	}
 
-	return parseAuthToken(req.Header.Get("Authorization")) == expected
+	return ocpiutil.AuthHeaderMatchesToken(req.Header.Get("Authorization"), expected)
 }
 
 func callbackURLs(rt *sessionRuntime) []string {
@@ -152,23 +152,4 @@ func callbackURLs(rt *sessionRuntime) []string {
 	}
 
 	return urls
-}
-
-func parseAuthToken(header string) string {
-	if header == "" {
-		return ""
-	}
-
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "token") {
-		return ""
-	}
-
-	raw := strings.TrimSpace(parts[1])
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err == nil && len(decoded) > 0 {
-		return string(decoded)
-	}
-
-	return raw
 }

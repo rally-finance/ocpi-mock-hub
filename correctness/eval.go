@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
+	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
 type evaluatorFunc func(rt *sessionRuntime, def CaseDefinition) CaseEvaluation
@@ -19,6 +20,7 @@ type evaluatorFunc func(rt *sessionRuntime, def CaseDefinition) CaseEvaluation
 func builtinEvaluators() map[string]evaluatorFunc {
 	return map[string]evaluatorFunc{
 		"handshake_flow":                       evalHandshakeFlow,
+		"peer_fetches_hub_versions":            evalPeerFetchesHubVersions,
 		"unregister_flow":                      evalUnregisterFlow,
 		"pull_locations_full":                  evalPullLocationsFull,
 		"pull_locations_delta_update":          evalPullLocationsDeltaUpdate,
@@ -73,14 +75,17 @@ func evalHandshakeFlow(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 
 	var issues []string
 	issues = append(issues, validateRequestAuth(*getVersions)...)
+	issues = append(issues, validateRequestAuthMatchesToken(*getVersions, rt.session.Config.PeerToken, "configured peer token for this session")...)
 	issues = append(issues, validateResponseTime(*getVersions, 2000)...)
 	issues = append(issues, validateVersionsEnvelope(*getVersions)...)
 
 	issues = append(issues, validateRequestAuth(*getDetails)...)
+	issues = append(issues, validateRequestAuthMatchesToken(*getDetails, rt.session.Config.PeerToken, "configured peer token for this session")...)
 	issues = append(issues, validateResponseTime(*getDetails, 2000)...)
 	issues = append(issues, validateVersionDetailsEnvelope(*getDetails)...)
 
 	issues = append(issues, validateRequestAuth(*postCredentials)...)
+	issues = append(issues, validateRequestAuthMatchesToken(*postCredentials, rt.session.Config.PeerToken, "configured peer token for this session")...)
 	issues = append(issues, validateJSONContentType(*postCredentials)...)
 	issues = append(issues, validateResponseTime(*postCredentials, 2000)...)
 	issues = append(issues, validateCredentialsEnvelope(*postCredentials)...)
@@ -92,6 +97,56 @@ func evalHandshakeFlow(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 	}
 
 	return passedEval("The peer completed the OCPI versions, version details, and credentials exchange with valid response envelopes and timing.", *getVersions, *getDetails, *postCredentials)
+}
+
+func evalPeerFetchesHubVersions(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
+	action, pending, failed := actionGate(rt, "run_handshake")
+	if pending != nil || failed != nil {
+		if pending != nil {
+			return *pending
+		}
+		return *failed
+	}
+
+	events := filterDirection(windowEvents(rt, action.ID), "inbound")
+	versionsEvent := firstMatchingEvent(events, func(event TrafficEvent) bool {
+		return event.Method == "GET" && event.Path == "/ocpi/versions"
+	})
+	if versionsEvent == nil {
+		return pendingEval("Waiting for the peer to fetch the mock hub versions endpoint with the session token returned by the credentials exchange.")
+	}
+
+	expectedToken := ""
+	if rt != nil && rt.sandbox != nil && rt.sandbox.Store != nil {
+		expectedToken, _ = rt.sandbox.Store.GetTokenB()
+	}
+
+	var issues []string
+	issues = append(issues, validateInboundOCPIRequest(*versionsEvent, true)...)
+	issues = append(issues, validateRequestAuthMatchesToken(*versionsEvent, expectedToken, "session Token B returned by the hub")...)
+	issues = append(issues, validateHTTPSuccessStatus(*versionsEvent, "GET /ocpi/versions")...)
+	if len(issues) > 0 {
+		return failedEval([]string{"The peer did not fetch the mock hub versions endpoint with the expected session token."}, issues, *versionsEvent)
+	}
+
+	detailsEvent := firstMatchingEvent(events, func(event TrafficEvent) bool {
+		return event.Method == "GET" && event.Path == "/ocpi/2.2.1"
+	})
+	if detailsEvent == nil {
+		return pendingEvalWithEvidence("Waiting for the peer to fetch the mock hub version details endpoint after reading /ocpi/versions.", *versionsEvent)
+	}
+
+	issues = append(issues, validateInboundOCPIRequest(*detailsEvent, true)...)
+	issues = append(issues, validateRequestAuthMatchesToken(*detailsEvent, expectedToken, "session Token B returned by the hub")...)
+	issues = append(issues, validateHTTPSuccessStatus(*detailsEvent, "GET /ocpi/2.2.1")...)
+	if !eventStartedBefore(*versionsEvent, *detailsEvent) {
+		issues = append(issues, "The peer requested /ocpi/2.2.1 before first fetching /ocpi/versions.")
+	}
+	if len(issues) > 0 {
+		return failedEval([]string{"The peer did not complete the expected follow-up discovery calls to the mock hub after the credentials exchange."}, issues, *versionsEvent, *detailsEvent)
+	}
+
+	return passedEval("The peer fetched the mock hub versions and version details endpoints using the session token returned by the credentials exchange.", *versionsEvent, *detailsEvent)
 }
 
 func evalUnregisterFlow(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
@@ -658,6 +713,15 @@ func nthMatchingEvent(events []TrafficEvent, n int, fn func(TrafficEvent) bool) 
 	return nil
 }
 
+func eventStartedBefore(first, second TrafficEvent) bool {
+	firstTime, firstErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(first.StartedAt))
+	secondTime, secondErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(second.StartedAt))
+	if firstErr == nil && secondErr == nil {
+		return firstTime.Before(secondTime)
+	}
+	return strings.TrimSpace(first.StartedAt) < strings.TrimSpace(second.StartedAt)
+}
+
 func validatePaginatedRequests(events []TrafficEvent, requireDates bool) []string {
 	var issues []string
 	for i, event := range events {
@@ -755,6 +819,16 @@ func validateRequestAuth(event TrafficEvent) []string {
 	return nil
 }
 
+func validateRequestAuthMatchesToken(event TrafficEvent, expected, label string) []string {
+	if strings.TrimSpace(expected) == "" {
+		return []string{fmt.Sprintf("The expected %s was not available in the session state.", label)}
+	}
+	if ocpiutil.AuthHeaderMatchesToken(headerValue(event.RequestHeaders, "authorization"), expected) {
+		return nil
+	}
+	return []string{fmt.Sprintf("The request Authorization header did not use the expected %s.", label)}
+}
+
 func validateJSONContentType(event TrafficEvent) []string {
 	contentType := headerValue(event.RequestHeaders, "content-type")
 	if contentType == "" {
@@ -771,6 +845,13 @@ func validateResponseTime(event TrafficEvent, maxMS int64) []string {
 		return []string{fmt.Sprintf("The response took %dms which exceeded the %dms limit.", event.DurationMS, maxMS)}
 	}
 	return nil
+}
+
+func validateHTTPSuccessStatus(event TrafficEvent, label string) []string {
+	if event.ResponseStatus >= 200 && event.ResponseStatus < 300 {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s returned HTTP %d instead of a success status.", label, event.ResponseStatus)}
 }
 
 func validateVersionsEnvelope(event TrafficEvent) []string {

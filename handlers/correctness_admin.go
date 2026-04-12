@@ -74,7 +74,11 @@ func (h *Handler) RunCorrectnessAction(w http.ResponseWriter, r *http.Request) {
 	actionID := chi.URLParam(r, "actionID")
 
 	if err := h.Correctness.MarkActionStarted(sessionID, actionID); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, correctness.ErrActiveSessionExists) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 

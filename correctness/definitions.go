@@ -20,13 +20,6 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Kind:        "outbound",
 			},
 			{
-				ID:          "run_unregister",
-				Group:       "Handshake",
-				Title:       "Run Unregister",
-				Description: "The mock hub sends DELETE Credentials to the peer using the credentials endpoint discovered during handshake.",
-				Kind:        "outbound",
-			},
-			{
 				ID:          "arm_pull_locations_full",
 				Group:       "Locations Pull",
 				Title:       "Wait For Full Locations Pull",
@@ -166,13 +159,20 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Push a CDR to the peer CDRs receiver endpoint.",
 				Kind:        "outbound",
 			},
+			{
+				ID:          "run_unregister",
+				Group:       "Handshake",
+				Title:       "Run Unregister",
+				Description: "Send DELETE Credentials to the peer after the rest of the correctness flow is complete.",
+				Kind:        "outbound",
+			},
 		},
 		Cases: []CaseDefinition{
 			{
 				ID:          "handshake_flow",
 				Group:       "Handshake",
-				Title:       "Versions, Version Details, and Credentials Exchange",
-				Description: "Validate the official OCPI handshake flow initiated by the mock hub against the peer versions endpoint.",
+				Title:       "Hub-Initiated Versions, Version Details, and Credentials Exchange",
+				Description: "Validate the official OCPI handshake flow initiated by the mock hub against the peer versions endpoint using the session's configured peer token.",
 				Evaluator:   "handshake_flow",
 				ActionIDs:   []string{"run_handshake"},
 				ScenarioSource: []ScenarioSource{
@@ -185,19 +185,20 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				},
 			},
 			{
-				ID:          "unregister_flow",
+				ID:          "peer_fetches_hub_versions",
 				Group:       "Handshake",
-				Title:       "Credentials Unregister",
-				Description: "Validate the peer DELETE Credentials response and timing after the handshake has completed.",
-				Evaluator:   "unregister_flow",
-				ActionIDs:   []string{"run_unregister"},
+				Title:       "Peer Fetches Mock Hub Versions and Version Details",
+				Description: "Validate that the peer follows the credentials exchange by calling the mock hub versions endpoints with the session token returned by the hub.",
+				Evaluator:   "peer_fetches_hub_versions",
+				ActionIDs:   []string{"run_handshake"},
 				Requires:    []string{"handshake_flow"},
 				ScenarioSource: []ScenarioSource{
-					{Sheet: "Unregister FromIOP", CaseIDs: []string{"Unregister_FromIOP_1", "Unregister_FromIOP_2"}},
+					{Sheet: "Register FromIOP", CaseIDs: []string{"REG_FromIOP_1", "REG_FromIOP_4", "REG_FromIOP_5"}},
 				},
 				NormativeSource: []NormativeSource{
-					{ID: "credentials", Reference: "credentials", Title: "Credentials Module"},
-					{ID: "transport-response", Reference: "transport_and_format#response", Title: "OCPI Response Envelope"},
+					{ID: "versions", Reference: "version_information_endpoint", Title: "Versions and Version Details"},
+					{ID: "transport-auth", Reference: "transport_and_format#authorization", Title: "Authorization Header"},
+					{ID: "transport-get", Reference: "transport_and_format#GET", Title: "GET Request Semantics"},
 				},
 			},
 			{
@@ -207,6 +208,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the full pull request, request headers, and pagination sequence for the Locations sender endpoint.",
 				Evaluator:   "pull_locations_full",
 				ActionIDs:   []string{"arm_pull_locations_full"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Pull Locations ToIOP", CaseIDs: []string{"Pull_Locations_1", "Pull_Locations_3", "Pull_Locations_4"}},
 				},
@@ -308,6 +310,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the full pull request, request headers, and pagination sequence for the Tariffs sender endpoint.",
 				Evaluator:   "pull_tariffs_full",
 				ActionIDs:   []string{"arm_pull_tariffs_full"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Pull Tariff (ToIOP)", CaseIDs: []string{"Pull_Tariff_1", "Pull_Tariff_2", "Pull_Tariff_3", "Pull_Tariff_4"}},
 				},
@@ -340,6 +343,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate a new Token push from the eMSP to the hub.",
 				Evaluator:   "token_push_create",
 				ActionIDs:   []string{"arm_push_token_create"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Push Token ToIOP", CaseIDs: []string{"Push_Token_1", "Push_Token_2", "Push_Token_3", "Push_Token_4"}},
 				},
@@ -388,7 +392,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the peer response when the hub asks for authorization of an invalid token.",
 				Evaluator:   "rta_invalid",
 				ActionIDs:   []string{"run_rta_invalid"},
-				Requires:    []string{"handshake_flow"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "RTA FromIOP", CaseIDs: []string{"RT_Authorization_2"}},
 				},
@@ -404,7 +408,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the peer response when the hub asks for authorization of a known valid token.",
 				Evaluator:   "rta_valid",
 				ActionIDs:   []string{"run_rta_valid"},
-				Requires:    []string{"handshake_flow", "token_push_create"},
+				Requires:    []string{"peer_fetches_hub_versions", "token_push_create"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "RTA FromIOP", CaseIDs: []string{"RT_Authorization_3"}},
 				},
@@ -420,7 +424,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the inbound START_SESSION command and the resulting callback flow.",
 				Evaluator:   "remote_start",
 				ActionIDs:   []string{"arm_remote_start"},
-				Requires:    []string{"handshake_flow"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Start Session", CaseIDs: []string{"Remote_Start_1", "Remote_Start_2", "Remote_Start_3", "Remote_Start_4", "Remote_Start_5"}},
 				},
@@ -452,7 +456,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the peer behavior when the hub sends a status update for an unknown EVSE.",
 				Evaluator:   "evse_status_unknown",
 				ActionIDs:   []string{"run_evse_status_unknown"},
-				Requires:    []string{"handshake_flow"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Push EVSE status FromIOP", CaseIDs: []string{"Push_EVSEStatus_2"}},
 				},
@@ -468,7 +472,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the peer behavior when the hub sends a status update for a known EVSE.",
 				Evaluator:   "evse_status_known",
 				ActionIDs:   []string{"run_evse_status_known"},
-				Requires:    []string{"handshake_flow"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Push EVSE status FromIOP", CaseIDs: []string{"Push_EVSEStatus_3", "Push_EVSEStatus_4"}},
 				},
@@ -484,7 +488,7 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Description: "Validate the peer response when the hub pushes a PENDING Session object.",
 				Evaluator:   "session_push_pending",
 				ActionIDs:   []string{"run_session_push_pending"},
-				Requires:    []string{"handshake_flow"},
+				Requires:    []string{"peer_fetches_hub_versions"},
 				ScenarioSource: []ScenarioSource{
 					{Sheet: "Push Sessions FromIOP", CaseIDs: []string{"Push_Session_2"}},
 				},
@@ -538,6 +542,22 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				},
 				NormativeSource: []NormativeSource{
 					{ID: "cdrs-receiver", Reference: "mod_cdrs", Title: "CDRs Receiver Interface"},
+					{ID: "transport-response", Reference: "transport_and_format#response", Title: "OCPI Response Envelope"},
+				},
+			},
+			{
+				ID:          "unregister_flow",
+				Group:       "Handshake",
+				Title:       "Credentials Unregister",
+				Description: "Validate the peer DELETE Credentials response and timing after the rest of the correctness flow has completed.",
+				Evaluator:   "unregister_flow",
+				ActionIDs:   []string{"run_unregister"},
+				Requires:    []string{"peer_fetches_hub_versions"},
+				ScenarioSource: []ScenarioSource{
+					{Sheet: "Unregister FromIOP", CaseIDs: []string{"Unregister_FromIOP_1", "Unregister_FromIOP_2"}},
+				},
+				NormativeSource: []NormativeSource{
+					{ID: "credentials", Reference: "credentials", Title: "Credentials Module"},
 					{ID: "transport-response", Reference: "transport_and_format#response", Title: "OCPI Response Envelope"},
 				},
 			},

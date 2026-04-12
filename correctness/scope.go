@@ -30,7 +30,22 @@ func (m *Manager) MatchesInboundRequest(r *http.Request) bool {
 }
 
 func (m *Manager) ShouldCaptureInboundRequest(r *http.Request) bool {
-	return m.MatchesInboundRequest(r)
+	if r == nil {
+		return false
+	}
+	if m.MatchesInboundRequest(r) {
+		return true
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	rt := m.sessions[m.activeID]
+	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
+		return false
+	}
+
+	return inboundHandshakeDiscoveryCandidate(rt, r)
 }
 
 func (m *Manager) ShouldCaptureOutboundRequest(req *http.Request) bool {
@@ -68,19 +83,7 @@ func inboundRequestMatchesSession(rt *sessionRuntime, authHeader, fromCountry, f
 		return false
 	}
 
-	peerCountry := strings.ToUpper(strings.TrimSpace(rt.session.Peer.CountryCode))
-	peerParty := strings.ToUpper(strings.TrimSpace(rt.session.Peer.PartyID))
-	if peerCountry == "" || peerParty == "" {
-		return true
-	}
-
-	fromCountry = strings.ToUpper(strings.TrimSpace(fromCountry))
-	fromParty = strings.ToUpper(strings.TrimSpace(fromParty))
-	if fromCountry == "" && fromParty == "" {
-		return true
-	}
-
-	return fromCountry == peerCountry && fromParty == peerParty
+	return peerHeadersMatchSession(rt, fromCountry, fromParty, true)
 }
 
 func isSessionCallbackURL(rt *sessionRuntime, target string) bool {
@@ -106,6 +109,51 @@ func outboundRequestMatchesSessionToken(rt *sessionRuntime, req *http.Request) b
 	}
 
 	return ocpiutil.AuthHeaderMatchesToken(req.Header.Get("Authorization"), expected)
+}
+
+func inboundHandshakeDiscoveryCandidate(rt *sessionRuntime, r *http.Request) bool {
+	if rt == nil || r == nil || !isHandshakeDiscoveryPath(r.URL.Path) {
+		return false
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if len(ocpiutil.AuthTokenCandidates(authHeader)) == 0 {
+		return false
+	}
+
+	// Capture peer discovery attempts that still use the session's configured
+	// outbound peer token so the evaluator can surface the resulting 401.
+	expectedPeerToken := strings.TrimSpace(rt.session.Config.PeerToken)
+	if expectedPeerToken == "" || !ocpiutil.AuthHeaderMatchesToken(authHeader, expectedPeerToken) {
+		return false
+	}
+
+	return peerHeadersMatchSession(rt, r.Header.Get("OCPI-From-Country-Code"), r.Header.Get("OCPI-From-Party-Id"), true)
+}
+
+func peerHeadersMatchSession(rt *sessionRuntime, fromCountry, fromParty string, allowEmpty bool) bool {
+	peerCountry := strings.ToUpper(strings.TrimSpace(rt.session.Peer.CountryCode))
+	peerParty := strings.ToUpper(strings.TrimSpace(rt.session.Peer.PartyID))
+	if peerCountry == "" || peerParty == "" {
+		return true
+	}
+
+	fromCountry = strings.ToUpper(strings.TrimSpace(fromCountry))
+	fromParty = strings.ToUpper(strings.TrimSpace(fromParty))
+	if allowEmpty && fromCountry == "" && fromParty == "" {
+		return true
+	}
+
+	return fromCountry == peerCountry && fromParty == peerParty
+}
+
+func isHandshakeDiscoveryPath(path string) bool {
+	switch strings.TrimSpace(path) {
+	case "/ocpi/versions", "/ocpi/2.2.1":
+		return true
+	default:
+		return false
+	}
 }
 
 func callbackURLs(rt *sessionRuntime) []string {

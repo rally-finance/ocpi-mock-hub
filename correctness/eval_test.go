@@ -269,6 +269,171 @@ func TestEvalRemoteStopFallsBackToStoredSessionCallbackURL(t *testing.T) {
 	}
 }
 
+func TestEvalHandshakeFlowRequiresConfiguredPeerToken(t *testing.T) {
+	rt := &sessionRuntime{
+		session: TestSession{
+			Config: SessionConfig{
+				PeerToken: "session-peer-token",
+			},
+		},
+		actions: map[string]*ActionState{
+			"run_handshake": {
+				ID:          "run_handshake",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction:      "outbound",
+				Method:         "GET",
+				Path:           "/ocpi/versions",
+				RequestHeaders: map[string]string{"authorization": "Token wrong-token"},
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":[{"version":"2.2.1","url":"https://peer.example.com/ocpi/2.2.1"}]}`,
+			},
+			{
+				Direction:      "outbound",
+				Method:         "GET",
+				Path:           "/ocpi/2.2.1",
+				RequestHeaders: map[string]string{"authorization": "Token wrong-token"},
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"version":"2.2.1","endpoints":[{"identifier":"credentials","role":"RECEIVER","url":"https://peer.example.com/ocpi/2.2.1/credentials"}]}}`,
+			},
+			{
+				Direction:      "outbound",
+				Method:         "POST",
+				Path:           "/ocpi/2.2.1/credentials",
+				RequestHeaders: map[string]string{"authorization": "Token wrong-token", "content-type": "application/json"},
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:02Z","data":{"token":"peer-token-b","url":"https://peer.example.com/ocpi/versions","country_code":"NL","party_id":"EMS"}}`,
+			},
+		},
+	}
+
+	eval := evalHandshakeFlow(rt, CaseDefinition{})
+	if eval.Status != "failed" {
+		t.Fatalf("expected handshake flow to fail on the wrong peer token, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "configured peer token for this session") {
+		t.Fatalf("expected configured peer token validation issue, got %#v", eval.Messages)
+	}
+}
+
+func TestEvalPeerFetchesHubVersionsFailsWhenPeerUsesWrongToken(t *testing.T) {
+	sandbox := NewSandbox(testSeed())
+	if err := sandbox.Store.SetTokenB("hub-token-b"); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+
+	rt := &sessionRuntime{
+		sandbox: sandbox,
+		session: TestSession{
+			Config: SessionConfig{PeerToken: "peer-token"},
+			Peer: SessionPeerState{
+				CountryCode: "NL",
+				PartyID:     "EMS",
+			},
+		},
+		actions: map[string]*ActionState{
+			"run_handshake": {
+				ID:          "run_handshake",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction: "inbound",
+				Method:    "GET",
+				Path:      "/ocpi/versions",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token peer-token",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				ResponseStatus: 401,
+				ResponseBody:   `{"status_code":2001,"timestamp":"2026-01-01T00:00:00Z","status_message":"Invalid authorization token"}`,
+				StartedAt:      "2026-01-01T00:00:00Z",
+			},
+		},
+	}
+
+	eval := evalPeerFetchesHubVersions(rt, CaseDefinition{})
+	if eval.Status != "failed" {
+		t.Fatalf("expected peer hub versions follow-up to fail when using the wrong token, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "session Token B returned by the hub") {
+		t.Fatalf("expected session Token B issue, got %#v", eval.Messages)
+	}
+}
+
+func TestEvalPeerFetchesHubVersionsPassesWithSessionTokenB(t *testing.T) {
+	sandbox := NewSandbox(testSeed())
+	if err := sandbox.Store.SetTokenB("hub-token-b"); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+
+	rt := &sessionRuntime{
+		sandbox: sandbox,
+		session: TestSession{
+			Config: SessionConfig{PeerToken: "peer-token"},
+			Peer: SessionPeerState{
+				CountryCode: "NL",
+				PartyID:     "EMS",
+			},
+		},
+		actions: map[string]*ActionState{
+			"run_handshake": {
+				ID:          "run_handshake",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				ID:        "evt-versions",
+				Direction: "inbound",
+				Method:    "GET",
+				Path:      "/ocpi/versions",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token hub-token-b",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":[{"version":"2.2.1","url":"https://hub.example.com/ocpi/2.2.1"}]}`,
+				StartedAt:      "2026-01-01T00:00:00Z",
+			},
+			{
+				ID:        "evt-details",
+				Direction: "inbound",
+				Method:    "GET",
+				Path:      "/ocpi/2.2.1",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token hub-token-b",
+					"x-request-id":           "req-2",
+					"x-correlation-id":       "corr-2",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"version":"2.2.1","endpoints":[]}}`,
+				StartedAt:      "2026-01-01T00:00:01Z",
+			},
+		},
+	}
+
+	eval := evalPeerFetchesHubVersions(rt, CaseDefinition{})
+	if eval.Status != "passed" {
+		t.Fatalf("expected peer hub versions follow-up to pass, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+}
+
 func containsIssue(issues []string, want string) bool {
 	for _, issue := range issues {
 		if strings.Contains(issue, want) {

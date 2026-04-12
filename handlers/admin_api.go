@@ -198,31 +198,9 @@ func (h *Handler) ResetConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) TriggerTick(w http.ResponseWriter, r *http.Request) {
-	sim := simulation.New(
-		h.Store,
-		h.Seed,
-		h.Config.EMSPCallbackURL,
-		h.Config.CommandDelayMS,
-		h.Config.SessionDurationS,
-	)
-
-	if err := sim.Tick(); err != nil {
+	if err := h.tickAllStores(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-
-	if overlay := h.correctnessStore(""); overlay != h.Store {
-		correctnessSim := simulation.New(
-			overlay,
-			h.currentSeed(),
-			h.Config.EMSPCallbackURL,
-			h.Config.CommandDelayMS,
-			h.Config.SessionDurationS,
-		)
-		if err := correctnessSim.Tick(); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "tick_complete"})

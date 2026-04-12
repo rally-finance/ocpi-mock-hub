@@ -286,9 +286,6 @@ func (m *Manager) CompleteAction(sessionID, actionID string, output map[string]s
 	action.LastRunAt = nowUTC()
 	action.LastError = ""
 	action.Output = output
-	if action.EventAnchor == 0 && len(rt.events) == 0 {
-		action.EventAnchor = 0
-	}
 	m.rebuildSessionLocked(rt)
 	copied := rt.session
 	return &copied, nil

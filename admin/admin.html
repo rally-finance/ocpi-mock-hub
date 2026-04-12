@@ -795,11 +795,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 let refreshTimer = null;
+let refreshGeneration = 0;
 let currentSection = 'connection';
 let correctnessSuites = [];
 let correctnessSessions = [];
 let correctnessSession = null;
 let selectedCorrectnessSessionId = '';
+let correctnessLoadToken = 0;
 
 // Navigation
 $$('.nav-link').forEach(link => {
@@ -820,22 +822,38 @@ function switchSection(section) {
 }
 
 function setupAutoRefresh(section) {
-  if (refreshTimer) clearInterval(refreshTimer);
+  refreshGeneration += 1;
+  const generation = refreshGeneration;
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = null;
   if (['sessions', 'cdrs', 'tokens', 'reservations', 'log', 'correctness'].includes(section)) {
-    refreshTimer = setInterval(() => loadSection(section), 5000);
+    scheduleAutoRefresh(section, generation);
   }
 }
 
-function loadSection(section) {
+function scheduleAutoRefresh(section, generation) {
+  refreshTimer = setTimeout(async () => {
+    if (generation !== refreshGeneration || currentSection !== section) return;
+    try {
+      await loadSection(section);
+    } finally {
+      if (generation === refreshGeneration && currentSection === section) {
+        scheduleAutoRefresh(section, generation);
+      }
+    }
+  }, 5000);
+}
+
+async function loadSection(section) {
   switch (section) {
-    case 'connection': loadStatus(); break;
-    case 'locations': loadLocations(); break;
-    case 'sessions': loadSessions(); break;
-    case 'cdrs': loadCDRs(); break;
-    case 'tokens': loadTokens(); break;
-    case 'reservations': loadReservations(); break;
-    case 'log': loadLog(); break;
-    case 'correctness': loadCorrectness(); break;
+    case 'connection': return loadStatus();
+    case 'locations': return loadLocations();
+    case 'sessions': return loadSessions();
+    case 'cdrs': return loadCDRs();
+    case 'tokens': return loadTokens();
+    case 'reservations': return loadReservations();
+    case 'log': return loadLog();
+    case 'correctness': return loadCorrectness();
   }
 }
 
@@ -1121,6 +1139,7 @@ async function loadReservations() {
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
     ...opts
   });
   return resp.json();
@@ -1129,6 +1148,7 @@ async function api(path, opts = {}) {
 async function apiChecked(path, opts = {}) {
   const resp = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
     ...opts
   });
 
@@ -1227,6 +1247,13 @@ function hasActiveCorrectnessSession() {
 
 function selectedCorrectnessSnapshot() {
   return correctnessSessions.find(session => session.id === selectedCorrectnessSessionId) || null;
+}
+
+function renderCorrectnessCreateResult() {
+  const active = selectedCorrectnessSnapshot();
+  $('#correctness-create-result').innerHTML = active && active.status === 'running'
+    ? `<span class="badge badge-blue">Active session</span> ${esc(active.id)} is currently collecting correctness evidence.`
+    : '';
 }
 
 function renderCorrectnessSuiteOptions() {
@@ -1508,29 +1535,75 @@ function renderCorrectnessSection() {
   renderCorrectnessEvents();
 }
 
-async function loadCorrectnessSession(sessionID) {
+async function loadCorrectnessSession(sessionID, options = {}) {
+  const { preserveExisting = false, loadToken = 0, skipRender = false } = options;
   if (!sessionID) {
-    correctnessSession = null;
-    renderCorrectnessSection();
-    return;
+    if (!preserveExisting) {
+      correctnessSession = null;
+      if (!skipRender) renderCorrectnessSection();
+    }
+    return false;
   }
   try {
-    correctnessSession = await apiChecked('/admin/test-sessions/' + encodeURIComponent(sessionID));
+    const session = await apiChecked('/admin/test-sessions/' + encodeURIComponent(sessionID));
+    if (loadToken && loadToken !== correctnessLoadToken) {
+      return false;
+    }
+    correctnessSession = session;
   } catch (e) {
-    correctnessSession = null;
+    if (loadToken && loadToken !== correctnessLoadToken) {
+      return false;
+    }
+    if (!preserveExisting) {
+      correctnessSession = null;
+    }
     console.error('loadCorrectnessSession:', e);
+    if (!skipRender) renderCorrectnessSection();
+    return false;
   }
-  renderCorrectnessSection();
+  if (!skipRender) renderCorrectnessSection();
+  return true;
 }
 
 async function loadCorrectness() {
+  const loadToken = ++correctnessLoadToken;
+  const previousSuites = correctnessSuites;
+  const previousSessions = correctnessSessions;
+  const previousSession = correctnessSession;
+  const previousSelection = selectedCorrectnessSessionId;
+
   try {
     const [suites, sessions] = await Promise.all([
-      api('/admin/test-suites'),
-      api('/admin/test-sessions')
+      apiChecked('/admin/test-suites'),
+      apiChecked('/admin/test-sessions')
     ]);
-    correctnessSuites = Array.isArray(suites) ? suites : [];
-    correctnessSessions = Array.isArray(sessions) ? sessions : [];
+
+    if (loadToken !== correctnessLoadToken) {
+      return;
+    }
+    if (!Array.isArray(suites) || !Array.isArray(sessions)) {
+      throw new Error('correctness endpoints returned an unexpected payload');
+    }
+
+    const shouldPreserveSelected =
+      !!previousSelection &&
+      !!previousSession &&
+      previousSession.id === previousSelection &&
+      !sessions.some(session => session.id === previousSelection);
+
+    if (shouldPreserveSelected) {
+      console.warn('loadCorrectness: preserving the last known correctness session after a transient empty or inconsistent refresh');
+      correctnessSuites = suites.length ? suites : previousSuites;
+      correctnessSessions = previousSessions;
+      correctnessSession = previousSession;
+      renderCorrectnessSuiteOptions();
+      renderCorrectnessSection();
+      renderCorrectnessCreateResult();
+      return;
+    }
+
+    correctnessSuites = suites;
+    correctnessSessions = sessions;
     renderCorrectnessSuiteOptions();
 
     if (!selectedCorrectnessSessionId && correctnessSessions.length) {
@@ -1541,18 +1614,32 @@ async function loadCorrectness() {
     }
 
     if (selectedCorrectnessSessionId) {
-      await loadCorrectnessSession(selectedCorrectnessSessionId);
+      const preserveExisting = !!previousSession && previousSession.id === selectedCorrectnessSessionId;
+      await loadCorrectnessSession(selectedCorrectnessSessionId, {
+        preserveExisting,
+        loadToken,
+        skipRender: true
+      });
+      if (loadToken !== correctnessLoadToken) {
+        return;
+      }
     } else {
       correctnessSession = null;
-      renderCorrectnessSection();
     }
 
-    const active = selectedCorrectnessSnapshot();
-    $('#correctness-create-result').innerHTML = active && active.status === 'running'
-      ? `<span class="badge badge-blue">Active session</span> ${esc(active.id)} is currently collecting correctness evidence.`
-      : '';
+    renderCorrectnessSection();
+    renderCorrectnessCreateResult();
   } catch (e) {
     console.error('loadCorrectness:', e);
+    if (loadToken !== correctnessLoadToken) {
+      return;
+    }
+    correctnessSuites = previousSuites;
+    correctnessSessions = previousSessions;
+    correctnessSession = previousSession;
+    renderCorrectnessSuiteOptions();
+    renderCorrectnessSection();
+    renderCorrectnessCreateResult();
   }
 }
 

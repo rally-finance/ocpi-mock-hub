@@ -10,13 +10,14 @@ import (
 )
 
 func (h *Handler) GetTariffs(w http.ResponseWriter, r *http.Request) {
-	tariffs := h.Seed.Tariffs
+	seed := h.seedForRequest(r)
+	tariffs := seed.Tariffs
 
 	toCountry := strings.ToUpper(r.Header.Get("OCPI-To-Country-Code"))
 	toParty := strings.ToUpper(r.Header.Get("OCPI-To-Party-Id"))
 	if toCountry != "" && toParty != "" &&
 		!(toCountry == h.Config.HubCountry && toParty == h.Config.HubParty) {
-		tariffs = h.Seed.TariffsByParty(toCountry, toParty)
+		tariffs = seed.TariffsByParty(toCountry, toParty)
 	}
 
 	from, to := ocpiutil.ParseDateRange(r)
@@ -39,7 +40,7 @@ func (h *Handler) GetTariff(w http.ResponseWriter, r *http.Request) {
 	pid := chi.URLParam(r, "partyID")
 	tid := chi.URLParam(r, "tariffID")
 
-	t := h.Seed.TariffByID(cc, pid, tid)
+	t := h.seedForRequest(r).TariffByID(cc, pid, tid)
 	if t == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject, "Tariff not found")
 		return

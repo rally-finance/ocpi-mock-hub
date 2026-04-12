@@ -299,6 +299,159 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 11px;
   color: var(--text-muted);
 }
+
+.correctness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.callout {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(88,166,255,0.06);
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.panel-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg);
+}
+
+.panel-item.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(88,166,255,0.2);
+}
+
+.session-select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.session-select:hover {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.panel-title strong {
+  font-size: 13px;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.action-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.action-copy {
+  flex: 1;
+  min-width: 220px;
+}
+
+.checkpoint-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.checkpoint-form input[type="text"] {
+  width: 100%;
+}
+
+.event-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.event-card summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px;
+}
+
+.event-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.event-card[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.event-body {
+  padding: 12px;
+}
+
+.event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.code-snippet {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+@media (max-width: 720px) {
+  .container {
+    padding: 16px 12px;
+  }
+
+  nav {
+    overflow-x: auto;
+  }
+}
 </style>
 </head>
 <body>
@@ -312,6 +465,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <a href="#tokens" class="nav-link" data-section="tokens">Tokens</a>
   <a href="#reservations" class="nav-link" data-section="reservations">Reservations</a>
   <a href="#log" class="nav-link" data-section="log">Request Log</a>
+  <a href="#correctness" class="nav-link" data-section="correctness">Correctness Tests</a>
 </nav>
 
 <div class="container">
@@ -557,6 +711,82 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
   </div>
 
+  <!-- CORRECTNESS TESTS -->
+  <div id="correctness" class="section">
+    <h2>OCPI eMSP Correctness Tests</h2>
+
+    <div class="card">
+      <h3>Create Session</h3>
+      <div class="form-row">
+        <div class="form-group" style="min-width:220px;flex:0 0 240px">
+          <label>Suite</label>
+          <select id="correctness-suite"></select>
+        </div>
+        <div class="form-group">
+          <label>Peer Versions URL</label>
+          <input type="text" id="correctness-versions-url" placeholder="http://localhost:3000/ocpi/versions" />
+        </div>
+        <div class="form-group">
+          <label>Peer Token</label>
+          <input type="text" id="correctness-peer-token" placeholder="peer-credentials-token" />
+        </div>
+        <button id="btn-correctness-create" onclick="createCorrectnessSession()">Create Session</button>
+      </div>
+      <div id="correctness-create-result" style="margin-top:12px"></div>
+    </div>
+
+    <div class="correctness-grid">
+      <div class="card">
+        <div class="toolbar">
+          <h3 style="margin:0">Sessions</h3>
+          <span class="auto-refresh">Auto-refresh every 5s</span>
+        </div>
+        <div id="correctness-sessions" class="stack-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h3 style="margin:0">Current Step</h3>
+          <button class="btn-secondary" onclick="rerunCorrectnessSession()" id="btn-correctness-rerun" disabled>Rerun</button>
+        </div>
+        <div id="correctness-current-step" class="callout">Create or select a session to begin.</div>
+        <div id="correctness-summary" class="badge-row" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Actions</h3>
+      <div id="correctness-actions" class="stack-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Pending Checkpoints</h3>
+      <div id="correctness-checkpoints" class="stack-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Case Results</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Case</th>
+              <th>Group</th>
+              <th>Status</th>
+              <th>Feedback</th>
+            </tr>
+          </thead>
+          <tbody id="correctness-cases-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Recent Evidence</h3>
+      <div id="correctness-events" class="stack-list"></div>
+    </div>
+  </div>
+
 </div>
 
 <div id="toast" class="toast"></div>
@@ -566,6 +796,10 @@ const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 let refreshTimer = null;
 let currentSection = 'connection';
+let correctnessSuites = [];
+let correctnessSessions = [];
+let correctnessSession = null;
+let selectedCorrectnessSessionId = '';
 
 // Navigation
 $$('.nav-link').forEach(link => {
@@ -587,7 +821,7 @@ function switchSection(section) {
 
 function setupAutoRefresh(section) {
   if (refreshTimer) clearInterval(refreshTimer);
-  if (['sessions', 'cdrs', 'tokens', 'reservations', 'log'].includes(section)) {
+  if (['sessions', 'cdrs', 'tokens', 'reservations', 'log', 'correctness'].includes(section)) {
     refreshTimer = setInterval(() => loadSection(section), 5000);
   }
 }
@@ -601,6 +835,7 @@ function loadSection(section) {
     case 'tokens': loadTokens(); break;
     case 'reservations': loadReservations(); break;
     case 'log': loadLog(); break;
+    case 'correctness': loadCorrectness(); break;
   }
 }
 
@@ -891,10 +1126,44 @@ async function api(path, opts = {}) {
   return resp.json();
 }
 
+async function apiChecked(path, opts = {}) {
+  const resp = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts
+  });
+
+  const contentType = resp.headers.get('Content-Type') || '';
+  let payload = null;
+  if (contentType.includes('application/json')) {
+    payload = await resp.json();
+  } else {
+    const text = await resp.text();
+    payload = text ? { error: text } : null;
+  }
+
+  if (!resp.ok) {
+    const message = payload && typeof payload === 'object' && payload.error
+      ? payload.error
+      : `Request failed with status ${resp.status}`;
+    const err = new Error(message);
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
+}
+
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function escAttr(s) {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function fmtTime(iso) {
@@ -911,6 +1180,473 @@ function toast(msg, type = '') {
   el.textContent = msg;
   el.className = 'toast show ' + type;
   setTimeout(() => el.className = 'toast', 3000);
+}
+
+function badgeClassForStatus(status) {
+  switch ((status || '').toLowerCase()) {
+    case 'passed':
+    case 'completed':
+    case 'answered':
+      return 'badge-green';
+    case 'failed':
+      return 'badge-red';
+    case 'running':
+    case 'manual':
+      return 'badge-orange';
+    case 'blocked':
+      return 'badge-blue';
+    default:
+      return 'badge-blue';
+  }
+}
+
+function statusBadge(status) {
+  const label = (status || 'unknown').replaceAll('_', ' ');
+  return `<span class="badge ${badgeClassForStatus(status)}">${esc(label)}</span>`;
+}
+
+function shortText(value, max = 160) {
+  const text = String(value || '').trim();
+  if (text.length <= max) return text;
+  return text.slice(0, max - 1) + '…';
+}
+
+function lines(messages) {
+  if (!Array.isArray(messages) || !messages.length) return '—';
+  return messages.map(m => esc(m)).join('<br>');
+}
+
+function hasActiveCorrectnessSession() {
+  return correctnessSessions.some(session => session.status === 'running');
+}
+
+function selectedCorrectnessSnapshot() {
+  return correctnessSessions.find(session => session.id === selectedCorrectnessSessionId) || null;
+}
+
+function renderCorrectnessSuiteOptions() {
+  const select = $('#correctness-suite');
+  const currentValue = select.value;
+  if (!correctnessSuites.length) {
+    select.innerHTML = '<option value="">No suites available</option>';
+    return;
+  }
+  select.innerHTML = correctnessSuites.map(suite => `
+    <option value="${escAttr(suite.id)}">${esc(suite.name)}</option>
+  `).join('');
+
+  const nextValue = correctnessSuites.some(suite => suite.id === currentValue)
+    ? currentValue
+    : correctnessSuites[0].id;
+  select.value = nextValue;
+}
+
+function renderCorrectnessSessions() {
+  const root = $('#correctness-sessions');
+  if (!correctnessSessions.length) {
+    root.innerHTML = '<div class="empty">No correctness sessions yet.</div>';
+    return;
+  }
+
+  root.innerHTML = correctnessSessions.map(session => {
+    const active = session.id === selectedCorrectnessSessionId ? ' active' : '';
+    return `
+      <button class="panel-item session-select${active}" onclick="selectCorrectnessSession('${escAttr(session.id)}')">
+        <div class="panel-title">
+          <div>
+            <strong>${esc(session.id)}</strong>
+            <div class="meta">${esc(session.suite_name || 'OCPI eMSP Correctness Tests')}</div>
+          </div>
+          ${statusBadge(session.status)}
+        </div>
+        <div class="meta">Created ${fmtTime(session.created_at)} · Updated ${fmtTime(session.updated_at)}</div>
+        <div style="margin-top:8px">${esc(session.current_step?.title || 'Waiting for next step')}</div>
+        <div class="badge-row" style="margin-top:10px">
+          <span class="badge badge-green">${session.summary?.passed_cases || 0} passed</span>
+          <span class="badge badge-red">${session.summary?.failed_cases || 0} failed</span>
+          <span class="badge badge-blue">${session.summary?.pending_cases || 0} pending</span>
+          <span class="badge badge-orange">${session.summary?.manual_cases || 0} manual</span>
+        </div>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderCorrectnessSummary() {
+  const step = $('#correctness-current-step');
+  const summary = $('#correctness-summary');
+  const rerun = $('#btn-correctness-rerun');
+  const createButton = $('#btn-correctness-create');
+
+  createButton.disabled = hasActiveCorrectnessSession();
+
+  if (!correctnessSession) {
+    step.innerHTML = 'Create or select a session to begin.';
+    summary.innerHTML = '';
+    rerun.disabled = true;
+    return;
+  }
+
+  const next = correctnessSession.current_step || {};
+  const heading = next.title || 'Waiting for next step';
+  const description = next.description || 'No action guidance available.';
+  step.innerHTML = `
+    <div style="font-weight:600;margin-bottom:6px">${esc(heading)}</div>
+    <div>${esc(description)}</div>
+    <div class="meta" style="margin-top:10px">
+      Peer versions URL: ${esc(correctnessSession.config?.peer_versions_url || '—')}
+    </div>
+  `;
+
+  const s = correctnessSession.summary || {};
+  summary.innerHTML = [
+    statusBadge(correctnessSession.status),
+    `<span class="badge badge-green">${s.passed_cases || 0} passed</span>`,
+    `<span class="badge badge-red">${s.failed_cases || 0} failed</span>`,
+    `<span class="badge badge-blue">${s.pending_cases || 0} pending</span>`,
+    `<span class="badge badge-orange">${s.manual_cases || 0} manual</span>`,
+    `<span class="badge badge-blue">${s.blocked_cases || 0} blocked</span>`,
+    `<span class="badge badge-blue">${s.completion_rate || 0}% complete</span>`,
+    `<span class="badge badge-blue">${correctnessSession.event_count || 0} events</span>`
+  ].join('');
+
+  rerun.disabled = correctnessSession.status !== 'completed' || hasActiveCorrectnessSession();
+}
+
+function renderCorrectnessActions() {
+  const root = $('#correctness-actions');
+  if (!correctnessSession) {
+    root.innerHTML = '<div class="empty">Select a session to see available actions.</div>';
+    return;
+  }
+  if (!correctnessSession.actions || !correctnessSession.actions.length) {
+    root.innerHTML = '<div class="empty">No actions defined for this suite.</div>';
+    return;
+  }
+
+  const recommendedActionID = correctnessSession.current_step?.action_id || '';
+  const sessionComplete = correctnessSession.status === 'completed';
+
+  root.innerHTML = correctnessSession.actions.map(action => {
+    const canRun = !sessionComplete && action.status !== 'running' && action.status !== 'completed';
+    const feedback = action.last_error
+      ? `<div class="meta" style="color:var(--red);margin-top:8px">${esc(action.last_error)}</div>`
+      : action.output && Object.keys(action.output).length
+        ? `<div class="meta" style="margin-top:8px">${esc(Object.entries(action.output).map(([key, value]) => `${key}: ${value}`).join(' · '))}</div>`
+        : '';
+    return `
+      <div class="panel-item">
+        <div class="action-controls">
+          <div class="action-copy">
+            <div class="panel-title" style="margin-bottom:4px">
+              <div>
+                <strong>${esc(action.title)}</strong>
+                <div class="meta">${esc(action.group)} · ${esc(action.kind)}</div>
+              </div>
+              ${statusBadge(action.status)}
+            </div>
+            <div>${esc(action.description)}</div>
+            <div class="badge-row" style="margin-top:8px">
+              ${recommendedActionID === action.id ? '<span class="badge badge-blue">Recommended next step</span>' : ''}
+              ${action.last_run_at ? `<span class="badge badge-blue">Last run ${esc(fmtTime(action.last_run_at))}</span>` : ''}
+            </div>
+            ${feedback}
+          </div>
+          <button ${canRun ? '' : 'disabled'} onclick="runCorrectnessAction('${escAttr(action.id)}')">
+            ${action.status === 'failed' ? 'Retry' : 'Run'}
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function collectPendingCheckpoints(session) {
+  const items = [];
+  for (const result of session?.cases || []) {
+    for (const checkpoint of result.checkpoints || []) {
+      if (checkpoint.status !== 'answered') {
+        items.push({ result, checkpoint });
+      }
+    }
+  }
+  return items;
+}
+
+function renderCorrectnessCheckpoints() {
+  const root = $('#correctness-checkpoints');
+  if (!correctnessSession) {
+    root.innerHTML = '<div class="empty">Select a session to see manual checkpoints.</div>';
+    return;
+  }
+
+  const pending = collectPendingCheckpoints(correctnessSession);
+  if (!pending.length) {
+    root.innerHTML = '<div class="empty">No pending manual checkpoints.</div>';
+    return;
+  }
+
+  root.innerHTML = pending.map(({ result, checkpoint }) => `
+    <div class="panel-item">
+      <div class="panel-title">
+        <div>
+          <strong>${esc(result.title)}</strong>
+          <div class="meta">${esc(result.group)}</div>
+        </div>
+        ${statusBadge(checkpoint.status)}
+      </div>
+      <div>${esc(checkpoint.prompt)}</div>
+      <div class="checkpoint-form">
+        <input
+          type="text"
+          id="correctness-answer-${escAttr(checkpoint.id)}"
+          placeholder="${escAttr(checkpoint.placeholder || 'Add your observation')}"
+          value="${escAttr(checkpoint.answer || '')}"
+        />
+        <input
+          type="text"
+          id="correctness-notes-${escAttr(checkpoint.id)}"
+          placeholder="Optional notes"
+          value="${escAttr(checkpoint.notes || '')}"
+        />
+        <div class="action-controls" style="margin-top:2px">
+          <span class="meta">Only use manual confirmation when the traffic log cannot prove the behavior on its own.</span>
+          <button onclick="submitCorrectnessCheckpoint('${escAttr(checkpoint.id)}')">Save</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderCorrectnessCases() {
+  const body = $('#correctness-cases-body');
+  if (!correctnessSession) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">Select a session to see case results.</td></tr>';
+    return;
+  }
+  if (!correctnessSession.cases || !correctnessSession.cases.length) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No cases available.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = correctnessSession.cases.map(result => `
+    <tr>
+      <td style="font-weight:500">${esc(result.title)}</td>
+      <td>${esc(result.group)}</td>
+      <td>${statusBadge(result.status)}</td>
+      <td style="white-space:normal;max-width:620px">
+        ${lines(result.messages)}
+        ${result.evidence_event_ids && result.evidence_event_ids.length
+          ? `<div class="meta" style="margin-top:6px">${result.evidence_event_ids.length} linked event(s)</div>`
+          : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function renderCorrectnessEvents() {
+  const root = $('#correctness-events');
+  if (!correctnessSession) {
+    root.innerHTML = '<div class="empty">Select a session to inspect traffic evidence.</div>';
+    return;
+  }
+  const events = [...(correctnessSession.recent_events || [])].reverse();
+  if (!events.length) {
+    root.innerHTML = '<div class="empty">No OCPI traffic has been captured for this session yet.</div>';
+    return;
+  }
+
+  root.innerHTML = events.map(event => {
+    const requestPreview = shortText(event.request_body, 700);
+    const responsePreview = shortText(event.response_body, 700);
+    const path = event.path || event.url || '—';
+    return `
+      <details class="event-card">
+        <summary>
+          <div class="panel-title" style="margin-bottom:0">
+            <div>
+              <strong>${esc(event.method)} ${esc(path)}</strong>
+              <div class="meta">${esc(fmtTime(event.started_at))} · ${esc(event.direction)}${event.action_id ? ' · ' + esc(event.action_id) : ''}</div>
+            </div>
+            <div class="badge-row">
+              <span class="badge badge-blue">${esc(event.direction)}</span>
+              <span class="badge ${event.response_status >= 200 && event.response_status < 300 ? 'badge-green' : event.response_status >= 400 ? 'badge-red' : 'badge-orange'}">${event.response_status || 'ERR'}</span>
+              <span class="badge badge-blue">${event.duration_ms}ms</span>
+            </div>
+          </div>
+        </summary>
+        <div class="event-body">
+          <div class="event-meta">
+            <span class="badge badge-blue">${esc(event.url || '—')}</span>
+            ${event.raw_query ? `<span class="badge badge-blue">?${esc(event.raw_query)}</span>` : ''}
+          </div>
+          <div class="meta">Request body</div>
+          <pre class="code-snippet">${esc(requestPreview || '—')}</pre>
+          <div class="meta" style="margin-top:10px">Response body</div>
+          <pre class="code-snippet">${esc(responsePreview || '—')}</pre>
+        </div>
+      </details>
+    `;
+  }).join('');
+}
+
+function renderCorrectnessSection() {
+  renderCorrectnessSessions();
+  renderCorrectnessSummary();
+  renderCorrectnessActions();
+  renderCorrectnessCheckpoints();
+  renderCorrectnessCases();
+  renderCorrectnessEvents();
+}
+
+async function loadCorrectnessSession(sessionID) {
+  if (!sessionID) {
+    correctnessSession = null;
+    renderCorrectnessSection();
+    return;
+  }
+  try {
+    correctnessSession = await apiChecked('/admin/test-sessions/' + encodeURIComponent(sessionID));
+  } catch (e) {
+    correctnessSession = null;
+    console.error('loadCorrectnessSession:', e);
+  }
+  renderCorrectnessSection();
+}
+
+async function loadCorrectness() {
+  try {
+    const [suites, sessions] = await Promise.all([
+      api('/admin/test-suites'),
+      api('/admin/test-sessions')
+    ]);
+    correctnessSuites = Array.isArray(suites) ? suites : [];
+    correctnessSessions = Array.isArray(sessions) ? sessions : [];
+    renderCorrectnessSuiteOptions();
+
+    if (!selectedCorrectnessSessionId && correctnessSessions.length) {
+      selectedCorrectnessSessionId = correctnessSessions[0].id;
+    }
+    if (selectedCorrectnessSessionId && !correctnessSessions.some(session => session.id === selectedCorrectnessSessionId)) {
+      selectedCorrectnessSessionId = correctnessSessions[0]?.id || '';
+    }
+
+    if (selectedCorrectnessSessionId) {
+      await loadCorrectnessSession(selectedCorrectnessSessionId);
+    } else {
+      correctnessSession = null;
+      renderCorrectnessSection();
+    }
+
+    const active = selectedCorrectnessSnapshot();
+    $('#correctness-create-result').innerHTML = active && active.status === 'running'
+      ? `<span class="badge badge-blue">Active session</span> ${esc(active.id)} is currently collecting correctness evidence.`
+      : '';
+  } catch (e) {
+    console.error('loadCorrectness:', e);
+  }
+}
+
+async function createCorrectnessSession() {
+  const suiteID = $('#correctness-suite').value;
+  const versionsURL = $('#correctness-versions-url').value.trim();
+  const peerToken = $('#correctness-peer-token').value.trim();
+  if (!suiteID || !versionsURL || !peerToken) {
+    toast('Suite, peer versions URL, and peer token are required.', 'error');
+    return;
+  }
+
+  const btn = $('#btn-correctness-create');
+  const result = $('#correctness-create-result');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+  result.innerHTML = '';
+
+  try {
+    const session = await apiChecked('/admin/test-sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        suite_id: suiteID,
+        peer_versions_url: versionsURL,
+        peer_token: peerToken
+      })
+    });
+    selectedCorrectnessSessionId = session.id;
+    correctnessSession = session;
+    result.innerHTML = `<span class="badge badge-green">Created</span> Session ${esc(session.id)} is ready.`;
+    toast('Correctness session created.', 'success');
+    await loadCorrectness();
+  } catch (e) {
+    result.innerHTML = `<span class="badge badge-red">Error</span> ${esc(e.message)}`;
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = hasActiveCorrectnessSession();
+    btn.textContent = 'Create Session';
+  }
+}
+
+async function selectCorrectnessSession(sessionID) {
+  selectedCorrectnessSessionId = sessionID;
+  await loadCorrectnessSession(sessionID);
+  renderCorrectnessSessions();
+}
+
+async function runCorrectnessAction(actionID) {
+  if (!selectedCorrectnessSessionId) {
+    toast('Select a session first.', 'error');
+    return;
+  }
+  try {
+    await apiChecked(`/admin/test-sessions/${encodeURIComponent(selectedCorrectnessSessionId)}/actions/${encodeURIComponent(actionID)}`, {
+      method: 'POST'
+    });
+    toast('Action completed.', 'success');
+    await loadCorrectness();
+  } catch (e) {
+    toast(e.message, 'error');
+    await loadCorrectness();
+  }
+}
+
+async function submitCorrectnessCheckpoint(checkpointID) {
+  if (!selectedCorrectnessSessionId) {
+    toast('Select a session first.', 'error');
+    return;
+  }
+  const answer = document.getElementById(`correctness-answer-${checkpointID}`)?.value?.trim() || '';
+  const notes = document.getElementById(`correctness-notes-${checkpointID}`)?.value?.trim() || '';
+  if (!answer) {
+    toast('Add an observation before saving the checkpoint.', 'error');
+    return;
+  }
+  try {
+    await apiChecked(`/admin/test-sessions/${encodeURIComponent(selectedCorrectnessSessionId)}/checkpoints/${encodeURIComponent(checkpointID)}`, {
+      method: 'POST',
+      body: JSON.stringify({ answer, notes })
+    });
+    toast('Checkpoint saved.', 'success');
+    await loadCorrectness();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function rerunCorrectnessSession() {
+  if (!selectedCorrectnessSessionId) {
+    toast('Select a completed session first.', 'error');
+    return;
+  }
+  try {
+    const session = await apiChecked(`/admin/test-sessions/${encodeURIComponent(selectedCorrectnessSessionId)}/rerun`, {
+      method: 'POST'
+    });
+    selectedCorrectnessSessionId = session.id;
+    correctnessSession = session;
+    toast('Fresh correctness session created.', 'success');
+    await loadCorrectness();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 
 // Push
@@ -974,7 +1710,7 @@ async function executePush() {
 
 // Init
 const hash = window.location.hash.replace('#', '') || 'connection';
-if (['connection', 'locations', 'sessions', 'cdrs', 'tokens', 'reservations', 'log'].includes(hash)) {
+if (['connection', 'locations', 'sessions', 'cdrs', 'tokens', 'reservations', 'log', 'correctness'].includes(hash)) {
   switchSection(hash);
 } else {
   switchSection('connection');

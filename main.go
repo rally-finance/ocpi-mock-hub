@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/rally-finance/ocpi-mock-hub/correctness"
 	"github.com/rally-finance/ocpi-mock-hub/hub"
 	"github.com/rally-finance/ocpi-mock-hub/simulation"
 )
@@ -17,13 +18,20 @@ func main() {
 		log.Fatalf("failed to initialize app: %v", err)
 	}
 	router := hub.NewRouter(app)
+	simulation.SetHTTPClient(correctness.NewHTTPClient(app.Correctness, nil))
 
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
-		sim := simulation.New(app.Store, app.Seed, cfg.EMSPCallbackURL, cfg.CommandDelayMS, cfg.SessionDurationS)
 		for range ticker.C {
+			sim := simulation.New(app.Store, app.Seed, cfg.EMSPCallbackURL, cfg.CommandDelayMS, cfg.SessionDurationS)
 			if err := sim.Tick(); err != nil {
 				log.Printf("[tick] error: %v", err)
+			}
+			if overlay := app.Correctness.ActiveOverlay(); overlay != nil {
+				correctnessSim := simulation.New(overlay, app.CurrentSeed(), cfg.EMSPCallbackURL, cfg.CommandDelayMS, cfg.SessionDurationS)
+				if err := correctnessSim.Tick(); err != nil {
+					log.Printf("[correctness tick] error: %v", err)
+				}
 			}
 		}
 	}()

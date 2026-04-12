@@ -68,7 +68,7 @@ func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	// Also accept Token B for already-handshaked clients querying versions.
-	tokenB, _ := h.Store.GetTokenB()
+	tokenB, _ := h.storeForRequest(r).GetTokenB()
 	if tokenB != "" && provided == tokenB {
 		return true
 	}

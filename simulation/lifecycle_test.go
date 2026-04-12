@@ -408,7 +408,7 @@ func TestTick_EVSENotSetAvailableWhenOtherSessionActive(t *testing.T) {
 		CountryCode: "DE", PartyID: "AAA", ID: "SESS-B",
 		StartDateTime: past, Status: "ACTIVE", CreatedAt: past,
 		ActivatedAt: time.Now().UTC().Format(time.RFC3339),
-		LocationID: "LOC-1", EvseUID: "EVSE-1",
+		LocationID:  "LOC-1", EvseUID: "EVSE-1",
 	}
 	d2, _ := json.Marshal(s2)
 	store.PutSession("SESS-B", d2)

@@ -8,7 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rally-finance/ocpi-mock-hub/admin"
+	"github.com/rally-finance/ocpi-mock-hub/correctness"
 	"github.com/rally-finance/ocpi-mock-hub/handlers"
+	"github.com/rally-finance/ocpi-mock-hub/simulation"
 )
 
 func NewRouter(app *App) http.Handler {
@@ -18,8 +20,12 @@ func NewRouter(app *App) http.Handler {
 
 	reqLog := handlers.NewRequestLog()
 	r.Use(handlers.RequestLogMiddleware(reqLog))
+	r.Use(correctness.Middleware(app.Correctness))
 	r.Use(ocpiFromHeadersMiddleware(app.Config.HubCountry, app.Config.HubParty))
 	r.Use(TokenAuthMiddleware(app))
+
+	httpClient := correctness.NewHTTPClient(app.Correctness, http.DefaultClient)
+	simulation.SetHTTPClient(httpClient)
 
 	h := handlers.New(handlers.HandlerConfig{
 		TokenA:                       app.Config.TokenA,
@@ -30,7 +36,7 @@ func NewRouter(app *App) http.Handler {
 		EncodeBase64:                 app.Config.EncodeBase64,
 		CommandDelayMS:               app.Config.CommandDelayMS,
 		SessionDurationS:             app.Config.SessionDurationS,
-	}, app.Store, app.Seed, reqLog)
+	}, app.Store, app.Seed, reqLog, app.Correctness, httpClient)
 
 	r.Use(handlers.FaultModeMiddleware(h))
 
@@ -90,6 +96,13 @@ func NewRouter(app *App) http.Handler {
 	r.Get("/admin/tokens", h.GetAdminTokens)
 	r.Get("/admin/reservations", h.GetAdminReservations)
 	r.Post("/admin/authorize", h.AdminAuthorize)
+	r.Get("/admin/test-suites", h.GetCorrectnessSuites)
+	r.Get("/admin/test-sessions", h.ListCorrectnessSessions)
+	r.Post("/admin/test-sessions", h.CreateCorrectnessSession)
+	r.Get("/admin/test-sessions/{sessionID}", h.GetCorrectnessSession)
+	r.Post("/admin/test-sessions/{sessionID}/actions/{actionID}", h.RunCorrectnessAction)
+	r.Post("/admin/test-sessions/{sessionID}/checkpoints/{checkpointID}", h.SubmitCorrectnessCheckpoint)
+	r.Post("/admin/test-sessions/{sessionID}/rerun", h.RerunCorrectnessSession)
 
 	// Admin HTML UI (embedded)
 	r.Get("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently).ServeHTTP)

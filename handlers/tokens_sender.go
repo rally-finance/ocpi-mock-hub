@@ -12,7 +12,8 @@ import (
 )
 
 func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
-	raw, err := h.Store.ListTokens()
+	store := h.storeForRequest(r)
+	raw, err := store.ListTokens()
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to list tokens")
 		return
@@ -46,11 +47,12 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
 
-	raw, err := h.Store.GetToken(cc, pid, uid)
+	raw, err := store.GetToken(cc, pid, uid)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get token")
 		return
@@ -68,6 +70,7 @@ type authorizeRequest struct {
 }
 
 func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
@@ -78,7 +81,7 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(body, &req)
 	}
 
-	mode, _ := h.Store.GetMode()
+	mode, _ := store.GetMode()
 	if mode == "reject" {
 		ocpiutil.OK(w, r, map[string]any{
 			"allowed": "NOT_ALLOWED",
@@ -96,7 +99,7 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _ := h.Store.GetToken(cc, pid, uid)
+	raw, _ := store.GetToken(cc, pid, uid)
 	if raw == nil {
 		ocpiutil.OK(w, r, map[string]any{
 			"allowed": "NOT_ALLOWED",
@@ -114,7 +117,7 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.LocationID != "" {
-		loc := h.Seed.LocationByID(req.LocationID)
+		loc := h.seedForRequest(r).LocationByID(req.LocationID)
 		if loc != nil && len(loc.EVSEs) > 0 {
 			evseUIDs := make([]string, 0, len(loc.EVSEs))
 			for _, e := range loc.EVSEs {

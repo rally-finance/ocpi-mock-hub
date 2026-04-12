@@ -11,6 +11,7 @@ import (
 )
 
 func (h *Handler) PutReceiverSession(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	sessionID := chi.URLParam(r, "sessionID")
 
 	body, err := io.ReadAll(r.Body)
@@ -27,17 +28,18 @@ func (h *Handler) PutReceiverSession(w http.ResponseWriter, r *http.Request) {
 
 	parsed["id"] = sessionID
 	data, _ := json.Marshal(parsed)
-	h.Store.PutSession(sessionID, data)
+	store.PutSession(sessionID, data)
 
 	ocpiutil.OK(w, r, nil)
 }
 
 func (h *Handler) GetSessionByID(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	countryCode := strings.ToUpper(chi.URLParam(r, "countryCode"))
 	partyID := strings.ToUpper(chi.URLParam(r, "partyID"))
 	sessionID := chi.URLParam(r, "sessionID")
 
-	raw, err := h.Store.GetSession(sessionID)
+	raw, err := store.GetSession(sessionID)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get session")
 		return
@@ -62,7 +64,7 @@ func (h *Handler) GetSessionByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetSessions(w http.ResponseWriter, r *http.Request) {
-	raw, err := h.Store.ListSessions()
+	raw, err := h.storeForRequest(r).ListSessions()
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to list sessions")
 		return

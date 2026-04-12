@@ -1,0 +1,120 @@
+package correctness
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestBuiltinSuiteUsesCorrectnessNaming(t *testing.T) {
+	suites := BuiltinSuites()
+	if len(suites) != 1 {
+		t.Fatalf("expected exactly one built-in suite, got %d", len(suites))
+	}
+
+	suite := suites[0]
+	if suite.ID != DefaultSuiteID {
+		t.Fatalf("expected suite ID %q, got %q", DefaultSuiteID, suite.ID)
+	}
+	if suite.Name != "OCPI 2.2.1 eMSP Correctness Tests" {
+		t.Fatalf("unexpected suite name: %q", suite.Name)
+	}
+
+	lowerProductText := strings.ToLower(strings.Join([]string{
+		suite.ID,
+		suite.Name,
+		suite.Description,
+	}, " "))
+	for _, forbidden := range []string{"certification", "gireve", "gireve_id"} {
+		if strings.Contains(lowerProductText, forbidden) {
+			t.Fatalf("suite product text unexpectedly contained %q", forbidden)
+		}
+	}
+}
+
+func TestBuiltinSuiteDefinitionsAreNormativeAndVendorNeutral(t *testing.T) {
+	suite := BuiltinSuites()[0]
+
+	actionIDs := make(map[string]struct{}, len(suite.Actions))
+	for _, action := range suite.Actions {
+		if action.ID == "" {
+			t.Fatal("found action with empty ID")
+		}
+		if _, exists := actionIDs[action.ID]; exists {
+			t.Fatalf("duplicate action ID %q", action.ID)
+		}
+		actionIDs[action.ID] = struct{}{}
+
+		productText := strings.ToLower(strings.Join([]string{
+			action.ID,
+			action.Group,
+			action.Title,
+			action.Description,
+			action.Kind,
+		}, " "))
+		for _, forbidden := range []string{"certification", "gireve", "gireve_id"} {
+			if strings.Contains(productText, forbidden) {
+				t.Fatalf("action %q unexpectedly contained %q", action.ID, forbidden)
+			}
+		}
+	}
+
+	caseIDs := make(map[string]struct{}, len(suite.Cases))
+	for _, def := range suite.Cases {
+		if def.ID == "" {
+			t.Fatal("found case with empty ID")
+		}
+		if _, exists := caseIDs[def.ID]; exists {
+			t.Fatalf("duplicate case ID %q", def.ID)
+		}
+		caseIDs[def.ID] = struct{}{}
+
+		if def.CompatibilityProfile != "" {
+			t.Fatalf("expected empty compatibility profile for base case %q, got %q", def.ID, def.CompatibilityProfile)
+		}
+		if len(def.ScenarioSource) == 0 {
+			t.Fatalf("case %q did not keep any scenario provenance", def.ID)
+		}
+		if len(def.NormativeSource) == 0 {
+			t.Fatalf("case %q did not include any OCPI normative sources", def.ID)
+		}
+
+		productText := strings.ToLower(strings.Join([]string{
+			def.ID,
+			def.Group,
+			def.Title,
+			def.Description,
+			def.Evaluator,
+		}, " "))
+		for _, forbidden := range []string{"certification", "gireve", "gireve_id"} {
+			if strings.Contains(productText, forbidden) {
+				t.Fatalf("case %q unexpectedly contained %q", def.ID, forbidden)
+			}
+		}
+	}
+
+	for _, deferred := range suite.Deferred {
+		if deferred.ID == "" {
+			t.Fatal("found deferred scenario with empty ID")
+		}
+		if deferred.Reason == "" {
+			t.Fatalf("deferred scenario %q did not include a reason", deferred.ID)
+		}
+		if len(deferred.Normative) == 0 {
+			t.Fatalf("deferred scenario %q did not include normative provenance", deferred.ID)
+		}
+	}
+}
+
+func TestBuiltinSuiteJSONDoesNotContainVendorKeys(t *testing.T) {
+	raw, err := json.Marshal(BuiltinSuites())
+	if err != nil {
+		t.Fatalf("marshal built-in suites: %v", err)
+	}
+	lower := strings.ToLower(string(raw))
+	for _, forbidden := range []string{"gireve_id", "\"compatibility_profile\":\"gireve\"", "certification"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("built-in suite JSON unexpectedly contained %q", forbidden)
+		}
+	}
+}

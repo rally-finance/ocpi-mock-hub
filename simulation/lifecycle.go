@@ -32,12 +32,10 @@ type Store interface {
 	GetMode() (string, error)
 }
 
-var pushClient = &http.Client{Timeout: 10 * time.Second}
-
 type Simulator struct {
 	store            Store
 	seed             *fakegen.SeedData
-	emspCallbackURL string
+	emspCallbackURL  string
 	commandDelayMS   int
 	sessionDurationS int
 	authToken        string
@@ -45,9 +43,9 @@ type Simulator struct {
 
 func New(store Store, seed *fakegen.SeedData, emspCallback string, delayMS, durationS int) *Simulator {
 	return &Simulator{
-		store:           store,
-		seed:            seed,
-		emspCallbackURL: emspCallback,
+		store:            store,
+		seed:             seed,
+		emspCallbackURL:  emspCallback,
 		commandDelayMS:   delayMS,
 		sessionDurationS: durationS,
 	}
@@ -207,8 +205,8 @@ func (s *Simulator) updateActiveSession(session *sessionRecord, now time.Time, a
 	// If a charging profile exists, cap the simulated power rate
 	if profile, _ := s.store.GetChargingProfile(session.ID); profile != nil {
 		var cp struct {
-			ChargingRateUnit    string `json:"charging_rate_unit"`
-			MinChargingRate     float64 `json:"min_charging_rate"`
+			ChargingRateUnit string  `json:"charging_rate_unit"`
+			MinChargingRate  float64 `json:"min_charging_rate"`
 		}
 		if json.Unmarshal(profile, &cp) == nil && cp.MinChargingRate > 0 {
 			rateKW := cp.MinChargingRate / 1000.0
@@ -305,10 +303,10 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 			"connector_format":     "SOCKET",
 			"connector_power_type": "AC_3_PHASE",
 		},
-		"currency":     session.Currency,
-		"total_cost":   session.TotalCost,
-		"total_energy": session.KWH,
-		"total_time":   roundTo(durationHours, 2),
+		"currency":           session.Currency,
+		"total_cost":         session.TotalCost,
+		"total_energy":       session.KWH,
+		"total_time":         roundTo(durationHours, 2),
 		"total_fixed_cost":   map[string]float64{"excl_vat": roundTo(fixedCost/1.19, 2), "incl_vat": fixedCost},
 		"total_energy_cost":  map[string]float64{"excl_vat": roundTo(energyCost/1.19, 2), "incl_vat": energyCost},
 		"total_time_cost":    map[string]float64{"excl_vat": roundTo(timeCost/1.19, 2), "incl_vat": timeCost},
@@ -398,7 +396,7 @@ func (s *Simulator) pushToEMSP(method, url string, payload any) {
 		req.Header.Set("Authorization", "Token "+s.authToken)
 	}
 
-	resp, err := pushClient.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		log.Printf("[push] %s -> error: %v", url, err)
 		return

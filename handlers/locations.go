@@ -11,13 +11,14 @@ import (
 )
 
 func (h *Handler) GetLocations(w http.ResponseWriter, r *http.Request) {
-	locations := h.Seed.Locations
+	seed := h.seedForRequest(r)
+	locations := seed.Locations
 
 	toCountry := strings.ToUpper(r.Header.Get("OCPI-To-Country-Code"))
 	toParty := strings.ToUpper(r.Header.Get("OCPI-To-Party-Id"))
 	if toCountry != "" && toParty != "" &&
 		!(toCountry == h.Config.HubCountry && toParty == h.Config.HubParty) {
-		locations = h.Seed.LocationsByParty(toCountry, toParty)
+		locations = seed.LocationsByParty(toCountry, toParty)
 	}
 
 	from, to := ocpiutil.ParseDateRange(r)
@@ -31,7 +32,7 @@ func (h *Handler) GetLocations(w http.ResponseWriter, r *http.Request) {
 		page = locations[:0]
 	}
 
-	activeEVSEs := h.activeEVSESet()
+	activeEVSEs := h.activeEVSESet(h.storeForRequest(r))
 	overlaid := make([]fakegen.Location, len(page))
 	for i, loc := range page {
 		overlaid[i] = applyEVSEOverlay(loc, activeEVSEs)
@@ -43,12 +44,12 @@ func (h *Handler) GetLocations(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetLocation(w http.ResponseWriter, r *http.Request) {
 	locationID := chi.URLParam(r, "locationID")
-	loc := h.Seed.LocationByID(locationID)
+	loc := h.seedForRequest(r).LocationByID(locationID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject, "Location not found")
 		return
 	}
-	result := applyEVSEOverlay(*loc, h.activeEVSESet())
+	result := applyEVSEOverlay(*loc, h.activeEVSESet(h.storeForRequest(r)))
 	ocpiutil.OK(w, r, result)
 }
 
@@ -56,7 +57,7 @@ func (h *Handler) GetEVSE(w http.ResponseWriter, r *http.Request) {
 	locationID := chi.URLParam(r, "locationID")
 	evseUID := chi.URLParam(r, "evseUID")
 
-	loc, evse := h.Seed.EVSEByUID(locationID, evseUID)
+	loc, evse := h.seedForRequest(r).EVSEByUID(locationID, evseUID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject, "Location not found")
 		return
@@ -66,7 +67,7 @@ func (h *Handler) GetEVSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := *evse
-	if h.activeEVSESet()[evse.UID] {
+	if h.activeEVSESet(h.storeForRequest(r))[evse.UID] {
 		result.Status = "CHARGING"
 	}
 	ocpiutil.OK(w, r, result)
@@ -77,7 +78,7 @@ func (h *Handler) GetConnector(w http.ResponseWriter, r *http.Request) {
 	evseUID := chi.URLParam(r, "evseUID")
 	connectorID := chi.URLParam(r, "connectorID")
 
-	loc, evse, conn := h.Seed.ConnectorByID(locationID, evseUID, connectorID)
+	loc, evse, conn := h.seedForRequest(r).ConnectorByID(locationID, evseUID, connectorID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject, "Location not found")
 		return
@@ -95,8 +96,8 @@ func (h *Handler) GetConnector(w http.ResponseWriter, r *http.Request) {
 
 // activeEVSESet returns the set of EVSE UIDs that have an active or pending session.
 // Built once per request to avoid repeated ListSessions calls.
-func (h *Handler) activeEVSESet() map[string]bool {
-	raw, err := h.Store.ListSessions()
+func (h *Handler) activeEVSESet(store Store) map[string]bool {
+	raw, err := store.ListSessions()
 	if err != nil || len(raw) == 0 {
 		return nil
 	}

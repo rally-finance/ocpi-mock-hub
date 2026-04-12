@@ -311,7 +311,7 @@ func evalRemoteStop(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 	issues = append(issues, validateOCPIEnvelopeResponse(*commandEvent, true)...)
 
 	callback := firstMatchingEvent(events, func(event TrafficEvent) bool {
-		return event.Direction == "outbound" && event.Method == "POST" && strings.Contains(strings.ToLower(event.RequestBody), "accepted")
+		return event.Direction == "outbound" && event.Method == "POST" && event.ActionID == "" && strings.Contains(strings.ToLower(event.RequestBody), "accepted")
 	})
 	if callback == nil {
 		return pendingEvalWithEvidence("Waiting for the asynchronous STOP_SESSION callback exchange.", *commandEvent)

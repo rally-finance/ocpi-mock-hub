@@ -86,6 +86,53 @@ func TestValidateTokenPayloadRejectsPathMismatchAndInvalidationErrors(t *testing
 	}
 }
 
+func TestEvalRemoteStopIgnoresActionDrivenOutboundPostWhenMatchingCallback(t *testing.T) {
+	rt := &sessionRuntime{
+		sandbox: NewSandbox(testSeed()),
+		actions: map[string]*ActionState{
+			"arm_remote_stop": {
+				ID:          "arm_remote_stop",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction: "inbound",
+				Method:    "POST",
+				Path:      "/ocpi/2.2.1/receiver/commands/STOP_SESSION",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token correctness-token",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				RequestBody:    `{"session_id":"SESS-1","response_url":"https://peer.example.com/callback"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":{"result":"ACCEPTED"}}`,
+			},
+			{
+				ActionID:       "run_session_push_active",
+				Direction:      "outbound",
+				Method:         "POST",
+				Path:           "/ocpi/2.2.1/receiver/sessions/NL/EMS/SESS-1",
+				RequestBody:    `{"result":"ACCEPTED"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"status":"ok"}}`,
+			},
+		},
+	}
+
+	eval := evalRemoteStop(rt, CaseDefinition{})
+	if eval.Status != "pending" {
+		t.Fatalf("expected pending when only action-tagged outbound POST exists, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "Waiting for the asynchronous STOP_SESSION callback exchange.") {
+		t.Fatalf("expected pending callback message, got %#v", eval.Messages)
+	}
+}
+
 func containsIssue(issues []string, want string) bool {
 	for _, issue := range issues {
 		if strings.Contains(issue, want) {

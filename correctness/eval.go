@@ -610,7 +610,6 @@ func validatePaginatedRequests(events []TrafficEvent, requireDates bool) []strin
 	var issues []string
 	for i, event := range events {
 		issues = append(issues, validateInboundOCPIRequest(event, true)...)
-		issues = append(issues, validateOCPIEnvelopeResponse(event, true)...)
 		query, _ := url.ParseQuery(event.RawQuery)
 		if requireDates {
 			dateFrom := query.Get("date_from")
@@ -668,12 +667,6 @@ func validatePaginatedRequests(events []TrafficEvent, requireDates bool) []strin
 			}
 		}
 
-		if headerValue(event.ResponseHeaders, "x-total-count") == "" {
-			issues = append(issues, "The paginated response did not include X-Total-Count.")
-		}
-		if headerValue(event.ResponseHeaders, "x-limit") == "" {
-			issues = append(issues, "The paginated response did not include X-Limit.")
-		}
 	}
 
 	return uniqueStrings(issues)

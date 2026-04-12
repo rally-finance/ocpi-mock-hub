@@ -57,6 +57,27 @@ func TestValidatePaginatedRequestsRejectsInvalidDeltaWindow(t *testing.T) {
 	}
 }
 
+func TestValidatePaginatedRequestsIgnoresHubResponseMetadata(t *testing.T) {
+	event := TrafficEvent{
+		Direction: "inbound",
+		Method:    "GET",
+		Path:      "/ocpi/2.2.1/sender/locations",
+		RawQuery:  "offset=0&limit=50",
+		RequestHeaders: map[string]string{
+			"authorization":          "Token peer-token",
+			"x-request-id":           "req-1",
+			"x-correlation-id":       "corr-1",
+			"ocpi-from-country-code": "NL",
+			"ocpi-from-party-id":     "EMS",
+		},
+	}
+
+	issues := validatePaginatedRequests([]TrafficEvent{event}, false)
+	if len(issues) != 0 {
+		t.Fatalf("expected request-only pagination validation, got %#v", issues)
+	}
+}
+
 func TestValidateTokenPayloadRejectsPathMismatchAndInvalidationErrors(t *testing.T) {
 	event := TrafficEvent{
 		Path:     "/ocpi/2.2.1/receiver/tokens/NL/EMS/TOK-1",

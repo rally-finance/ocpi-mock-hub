@@ -1161,6 +1161,7 @@ function esc(s) {
 function escAttr(s) {
   return String(s || '')
     .replaceAll('&', '&amp;')
+    .replaceAll("'", '&#39;')
     .replaceAll('"', '&quot;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
@@ -1588,7 +1589,6 @@ async function createCorrectnessSession() {
 async function selectCorrectnessSession(sessionID) {
   selectedCorrectnessSessionId = sessionID;
   await loadCorrectnessSession(sessionID);
-  renderCorrectnessSessions();
 }
 
 async function runCorrectnessAction(actionID) {

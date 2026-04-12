@@ -97,8 +97,9 @@ func (h *Handler) GetAdminLocations(w http.ResponseWriter, r *http.Request) {
 		EVSECount   int    `json:"evse_count"`
 	}
 
-	locs := make([]locationSummary, 0, len(h.Seed.Locations))
-	for _, loc := range h.Seed.Locations {
+	seed := h.Seed
+	locs := make([]locationSummary, 0, len(seed.Locations))
+	for _, loc := range seed.Locations {
 		locs = append(locs, locationSummary{
 			ID:          loc.ID,
 			CountryCode: loc.CountryCode,
@@ -208,6 +209,20 @@ func (h *Handler) TriggerTick(w http.ResponseWriter, r *http.Request) {
 	if err := sim.Tick(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+
+	if overlay := h.correctnessStore(""); overlay != h.Store {
+		correctnessSim := simulation.New(
+			overlay,
+			h.currentSeed(),
+			h.Config.EMSPCallbackURL,
+			h.Config.CommandDelayMS,
+			h.Config.SessionDurationS,
+		)
+		if err := correctnessSim.Tick(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "tick_complete"})

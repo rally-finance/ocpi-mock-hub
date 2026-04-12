@@ -54,6 +54,10 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
+				if app.Correctness != nil && app.Correctness.MatchesInboundRequest(r) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Handshake not completed")
 				return
 			}
@@ -62,6 +66,10 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 				// Try multi-party lookup
 				party, _ := app.Store.GetPartyByTokenB(provided)
 				if party != nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if app.Correctness != nil && app.Correctness.MatchesInboundRequest(r) {
 					next.ServeHTTP(w, r)
 					return
 				}

@@ -21,6 +21,21 @@ func (h *Handler) Tick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if overlay := h.correctnessStore(""); overlay != h.Store {
+		correctnessSim := simulation.New(
+			overlay,
+			h.currentSeed(),
+			h.Config.EMSPCallbackURL,
+			h.Config.CommandDelayMS,
+			h.Config.SessionDurationS,
+		)
+		if err := correctnessSim.Tick(); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"` + err.Error() + `"}`))
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok"}`))
 }

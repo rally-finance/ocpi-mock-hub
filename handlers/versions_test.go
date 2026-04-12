@@ -56,4 +56,3 @@ func TestGetVersionsUsesXRallyForwardedHost(t *testing.T) {
 		t.Fatalf("unexpected version URL, want %q got %q", want, body.Data[0].URL)
 	}
 }
-

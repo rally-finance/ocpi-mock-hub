@@ -7,7 +7,7 @@ import (
 )
 
 func (h *Handler) GetHubClientInfo(w http.ResponseWriter, r *http.Request) {
-	items := h.Seed.HubClientInfo
+	items := h.seedForRequest(r).HubClientInfo
 
 	p := h.parsePaging(r, 50)
 	total := len(items)

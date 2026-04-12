@@ -71,18 +71,23 @@ func newTestStore() *testStore {
 	}
 }
 
-func (s *testStore) GetTokenB() (string, error)                           { return s.tokenB, nil }
-func (s *testStore) SetTokenB(t string) error                             { s.tokenB = t; return nil }
-func (s *testStore) GetEMSPCallbackURL() (string, error)                  { return s.callbackURL, nil }
-func (s *testStore) SetEMSPCallbackURL(u string) error                    { s.callbackURL = u; return nil }
-func (s *testStore) GetEMSPCredentials() ([]byte, error)                  { return s.creds, nil }
-func (s *testStore) SetEMSPCredentials(c []byte) error                    { s.creds = c; return nil }
-func (s *testStore) GetEMSPOwnToken() (string, error)                     { return s.emspToken, nil }
-func (s *testStore) SetEMSPOwnToken(t string) error                       { s.emspToken = t; return nil }
-func (s *testStore) GetEMSPVersionsURL() (string, error)                  { return s.versionsURL, nil }
-func (s *testStore) SetEMSPVersionsURL(u string) error                    { s.versionsURL = u; return nil }
-func (s *testStore) PutToken(cc, pid, uid string, tok []byte) error       { s.tokens[cc+"/"+pid+"/"+uid] = tok; return nil }
-func (s *testStore) GetToken(cc, pid, uid string) ([]byte, error)         { return s.tokens[cc+"/"+pid+"/"+uid], nil }
+func (s *testStore) GetTokenB() (string, error)          { return s.tokenB, nil }
+func (s *testStore) SetTokenB(t string) error            { s.tokenB = t; return nil }
+func (s *testStore) GetEMSPCallbackURL() (string, error) { return s.callbackURL, nil }
+func (s *testStore) SetEMSPCallbackURL(u string) error   { s.callbackURL = u; return nil }
+func (s *testStore) GetEMSPCredentials() ([]byte, error) { return s.creds, nil }
+func (s *testStore) SetEMSPCredentials(c []byte) error   { s.creds = c; return nil }
+func (s *testStore) GetEMSPOwnToken() (string, error)    { return s.emspToken, nil }
+func (s *testStore) SetEMSPOwnToken(t string) error      { s.emspToken = t; return nil }
+func (s *testStore) GetEMSPVersionsURL() (string, error) { return s.versionsURL, nil }
+func (s *testStore) SetEMSPVersionsURL(u string) error   { s.versionsURL = u; return nil }
+func (s *testStore) PutToken(cc, pid, uid string, tok []byte) error {
+	s.tokens[cc+"/"+pid+"/"+uid] = tok
+	return nil
+}
+func (s *testStore) GetToken(cc, pid, uid string) ([]byte, error) {
+	return s.tokens[cc+"/"+pid+"/"+uid], nil
+}
 func (s *testStore) ListTokens() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.tokens))
 	for _, v := range s.tokens {
@@ -109,8 +114,11 @@ func (s *testStore) ListCDRs() ([][]byte, error) {
 	}
 	return r, nil
 }
-func (s *testStore) PutReservation(id string, data []byte) error { s.reservations[id] = data; return nil }
-func (s *testStore) GetReservation(id string) ([]byte, error)    { return s.reservations[id], nil }
+func (s *testStore) PutReservation(id string, data []byte) error {
+	s.reservations[id] = data
+	return nil
+}
+func (s *testStore) GetReservation(id string) ([]byte, error) { return s.reservations[id], nil }
 func (s *testStore) ListReservations() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.reservations))
 	for _, v := range s.reservations {
@@ -132,13 +140,15 @@ func (s *testStore) DeleteChargingProfile(sessionID string) error {
 }
 func (s *testStore) PutParty(key string, state []byte) error {
 	s.parties[key] = state
-	var p struct{ TokenB string `json:"token_b"` }
+	var p struct {
+		TokenB string `json:"token_b"`
+	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
 		s.tokenBIndex[p.TokenB] = key
 	}
 	return nil
 }
-func (s *testStore) GetParty(key string) ([]byte, error)    { return s.parties[key], nil }
+func (s *testStore) GetParty(key string) ([]byte, error) { return s.parties[key], nil }
 func (s *testStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
 	key, ok := s.tokenBIndex[tokenB]
 	if !ok {

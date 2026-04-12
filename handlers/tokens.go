@@ -9,6 +9,7 @@ import (
 )
 
 func (h *Handler) PutToken(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
@@ -19,7 +20,7 @@ func (h *Handler) PutToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Store.PutToken(cc, pid, uid, body); err != nil {
+	if err := store.PutToken(cc, pid, uid, body); err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to store token")
 		return
 	}

@@ -78,28 +78,29 @@ type ReservationRecord struct {
 type SessionRecord = ocpiutil.SessionRecord
 
 func (h *Handler) PostCommand(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	command := strings.ToUpper(chi.URLParam(r, "command"))
 
-	mode, _ := h.Store.GetMode()
+	mode, _ := store.GetMode()
 
 	switch command {
 	case "START_SESSION":
-		h.handleStartSession(w, r, mode)
+		h.handleStartSession(w, r, store, mode)
 	case "STOP_SESSION":
-		h.handleStopSession(w, r, mode)
+		h.handleStopSession(w, r, store, mode)
 	case "RESERVE_NOW":
-		h.handleReserveNow(w, r, mode)
+		h.handleReserveNow(w, r, store, mode)
 	case "CANCEL_RESERVATION":
-		h.handleCancelReservation(w, r, mode)
+		h.handleCancelReservation(w, r, store, mode)
 	case "UNLOCK_CONNECTOR":
-		h.handleUnlockConnector(w, r, mode)
+		h.handleUnlockConnector(w, r, store, mode)
 	default:
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusInvalidParams,
 			fmt.Sprintf("Unknown command: %s", command))
 	}
 }
 
-func (h *Handler) handleStartSession(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) handleStartSession(w http.ResponseWriter, r *http.Request, store Store, mode string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -118,7 +119,7 @@ func (h *Handler) handleStartSession(w http.ResponseWriter, r *http.Request, mod
 	}
 
 	// Validate location exists in seed.
-	loc := h.Seed.LocationByID(payload.LocationID)
+	loc := h.seedForRequest(r).LocationByID(payload.LocationID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject,
 			fmt.Sprintf("Location %s not found", payload.LocationID))
@@ -162,14 +163,14 @@ func (h *Handler) handleStartSession(w http.ResponseWriter, r *http.Request, mod
 	session.CDRToken.ContractID = payload.Token.ContractID
 
 	data, _ := json.Marshal(session)
-	h.Store.PutSession(sessionID, data)
+	store.PutSession(sessionID, data)
 
 	ocpiutil.OK(w, r, map[string]string{
 		"result": "ACCEPTED",
 	})
 }
 
-func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, store Store, mode string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -192,7 +193,7 @@ func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode
 		return
 	}
 
-	raw, _ := h.Store.GetSession(payload.SessionID)
+	raw, _ := store.GetSession(payload.SessionID)
 	if raw == nil {
 		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
 		return
@@ -212,13 +213,13 @@ func (h *Handler) handleStopSession(w http.ResponseWriter, r *http.Request, mode
 			session.CallbackSent = false
 		}
 		data, _ := json.Marshal(session)
-		h.Store.PutSession(session.ID, data)
+		store.PutSession(session.ID, data)
 	}
 
 	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }
 
-func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, store Store, mode string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -236,7 +237,7 @@ func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, mode 
 		return
 	}
 
-	loc := h.Seed.LocationByID(payload.LocationID)
+	loc := h.seedForRequest(r).LocationByID(payload.LocationID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject,
 			fmt.Sprintf("Location %s not found", payload.LocationID))
@@ -267,12 +268,12 @@ func (h *Handler) handleReserveNow(w http.ResponseWriter, r *http.Request, mode 
 	}
 
 	data, _ := json.Marshal(reservation)
-	h.Store.PutReservation(resID, data)
+	store.PutReservation(resID, data)
 
 	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }
 
-func (h *Handler) handleCancelReservation(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) handleCancelReservation(w http.ResponseWriter, r *http.Request, store Store, mode string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -290,17 +291,17 @@ func (h *Handler) handleCancelReservation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	raw, _ := h.Store.GetReservation(payload.ReservationID)
+	raw, _ := store.GetReservation(payload.ReservationID)
 	if raw == nil {
 		ocpiutil.OK(w, r, map[string]string{"result": "REJECTED"})
 		return
 	}
 
-	h.Store.DeleteReservation(payload.ReservationID)
+	store.DeleteReservation(payload.ReservationID)
 	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }
 
-func (h *Handler) handleUnlockConnector(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) handleUnlockConnector(w http.ResponseWriter, r *http.Request, store Store, mode string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -318,7 +319,7 @@ func (h *Handler) handleUnlockConnector(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	loc := h.Seed.LocationByID(payload.LocationID)
+	loc := h.seedForRequest(r).LocationByID(payload.LocationID)
 	if loc == nil {
 		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject,
 			fmt.Sprintf("Location %s not found", payload.LocationID))
@@ -329,15 +330,15 @@ func (h *Handler) handleUnlockConnector(w http.ResponseWriter, r *http.Request, 
 		go func() {
 			callback := map[string]any{"result": "ACCEPTED"}
 			cbData, _ := json.Marshal(callback)
-			req, err := http.NewRequest("POST", payload.ResponseURL, bytes.NewReader(cbData))
+			req, err := http.NewRequestWithContext(h.outboundContext("unlock_connector_callback"), "POST", payload.ResponseURL, bytes.NewReader(cbData))
 			if err != nil {
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
-			if token, _ := h.Store.GetEMSPOwnToken(); token != "" {
+			if token, _ := store.GetEMSPOwnToken(); token != "" {
 				req.Header.Set("Authorization", "Token "+token)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := h.outboundClient().Do(req)
 			if err == nil {
 				resp.Body.Close()
 			}

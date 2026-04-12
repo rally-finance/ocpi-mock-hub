@@ -13,6 +13,7 @@ import (
 )
 
 func (h *Handler) PostReceiverCDR(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusClientError, "Failed to read body")
@@ -31,7 +32,7 @@ func (h *Handler) PostReceiverCDR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Store.PutCDR(id, body)
+	store.PutCDR(id, body)
 
 	scheme := resolveScheme(r)
 	host := resolveHost(r)
@@ -43,8 +44,9 @@ func (h *Handler) PostReceiverCDR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetReceiverCDR(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	cdrID := chi.URLParam(r, "cdrID")
-	raw, err := h.Store.GetCDR(cdrID)
+	raw, err := store.GetCDR(cdrID)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get CDR")
 		return
@@ -57,11 +59,12 @@ func (h *Handler) GetReceiverCDR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetCDRByID(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	countryCode := strings.ToUpper(chi.URLParam(r, "countryCode"))
 	partyID := strings.ToUpper(chi.URLParam(r, "partyID"))
 	cdrID := chi.URLParam(r, "cdrID")
 
-	raw, err := h.Store.GetCDR(cdrID)
+	raw, err := store.GetCDR(cdrID)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get CDR")
 		return
@@ -86,7 +89,7 @@ func (h *Handler) GetCDRByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetCDRs(w http.ResponseWriter, r *http.Request) {
-	raw, err := h.Store.ListCDRs()
+	raw, err := h.storeForRequest(r).ListCDRs()
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to list CDRs")
 		return

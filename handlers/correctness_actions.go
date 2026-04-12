@@ -31,7 +31,7 @@ func (h *Handler) executeCorrectnessAction(r *http.Request, sessionID, actionID 
 	case "prepare_pull_locations_delta_update":
 		return h.prepareLocationDeltaUpdate(sessionID)
 	case "prepare_pull_locations_full_delete_connector":
-		return h.prepareLocationFullDeleteConnector(sessionID)
+		return h.prepareLocationFullDeleteConnector(session)
 	case "prepare_pull_locations_delta_delete_evse":
 		return h.prepareLocationDeltaDeleteEVSE(sessionID)
 	case "prepare_pull_locations_delta_delete_location":
@@ -213,9 +213,15 @@ func (h *Handler) prepareLocationDeltaUpdate(sessionID string) (map[string]strin
 	return output, err
 }
 
-func (h *Handler) prepareLocationFullDeleteConnector(sessionID string) (map[string]string, error) {
+func (h *Handler) prepareLocationFullDeleteConnector(session *correctness.TestSession) (map[string]string, error) {
 	var output map[string]string
-	err := h.Correctness.UpdateSandbox(sessionID, func(sandbox *correctness.Sandbox) error {
+	previous := actionOutput(session, "prepare_pull_locations_full_delete_connector")
+	err := h.Correctness.UpdateSandbox(session.ID, func(sandbox *correctness.Sandbox) error {
+		if reused, ok := ensureConnectorRemoved(sandbox, previous); ok {
+			output = reused
+			return nil
+		}
+
 		for i := range sandbox.Seed.Locations {
 			for j := range sandbox.Seed.Locations[i].EVSEs {
 				evse := &sandbox.Seed.Locations[i].EVSEs[j]
@@ -238,6 +244,52 @@ func (h *Handler) prepareLocationFullDeleteConnector(sessionID string) (map[stri
 		return fmt.Errorf("no connector available to remove")
 	})
 	return output, err
+}
+
+func ensureConnectorRemoved(sandbox *correctness.Sandbox, target map[string]string) (map[string]string, bool) {
+	if sandbox == nil || target == nil {
+		return nil, false
+	}
+
+	locationID := target["location_id"]
+	evseUID := target["evse_uid"]
+	connectorID := target["connector_id"]
+	if locationID == "" || evseUID == "" || connectorID == "" {
+		return nil, false
+	}
+
+	for i := range sandbox.Seed.Locations {
+		if sandbox.Seed.Locations[i].ID != locationID {
+			continue
+		}
+		for j := range sandbox.Seed.Locations[i].EVSEs {
+			evse := &sandbox.Seed.Locations[i].EVSEs[j]
+			if evse.UID != evseUID {
+				continue
+			}
+			for k := range evse.Connectors {
+				if evse.Connectors[k].ID != connectorID {
+					continue
+				}
+				evse.Connectors = append(append([]fakegen.Connector(nil), evse.Connectors[:k]...), evse.Connectors[k+1:]...)
+				now := time.Now().UTC().Format(time.RFC3339)
+				evse.LastUpdated = now
+				sandbox.Seed.Locations[i].LastUpdated = now
+				return map[string]string{
+					"location_id":  locationID,
+					"evse_uid":     evseUID,
+					"connector_id": connectorID,
+				}, true
+			}
+			return map[string]string{
+				"location_id":  locationID,
+				"evse_uid":     evseUID,
+				"connector_id": connectorID,
+			}, true
+		}
+	}
+
+	return nil, false
 }
 
 func (h *Handler) prepareLocationDeltaDeleteEVSE(sessionID string) (map[string]string, error) {
@@ -542,6 +594,18 @@ func (h *Handler) runCDRPush(session *correctness.TestSession) (map[string]strin
 	}
 	resp.Body.Close()
 	return map[string]string{"cdr_id": payload["id"].(string)}, nil
+}
+
+func actionOutput(session *correctness.TestSession, actionID string) map[string]string {
+	if session == nil {
+		return nil
+	}
+	for _, action := range session.Actions {
+		if action.ID == actionID {
+			return action.Output
+		}
+	}
+	return nil
 }
 
 func (h *Handler) correctnessAdvertisedVersionsURL(r *http.Request) string {

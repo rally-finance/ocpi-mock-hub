@@ -2,6 +2,7 @@ package correctness
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
@@ -208,6 +209,83 @@ func TestManagerRerunCreatesFreshSandbox(t *testing.T) {
 
 	if got := manager.sessions[rerun.ID].sandbox.Seed.Locations[0].Address; got != originalAddress {
 		t.Fatalf("expected rerun sandbox address %q, got %q", originalAddress, got)
+	}
+}
+
+func TestMarkActionStartedRejectsIdleActionOutOfSequence(t *testing.T) {
+	manager := NewManager(testSeed())
+	session, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	err = manager.MarkActionStarted(session.ID, "run_unregister")
+	if err == nil {
+		t.Fatal("expected out-of-sequence unregister action to be rejected")
+	}
+	if !strings.Contains(err.Error(), "Run Handshake") {
+		t.Fatalf("expected error to point back to the handshake step, got %v", err)
+	}
+}
+
+func TestMarkActionStartedReactivatesCompletedActionRerunAndResetsCheckpoints(t *testing.T) {
+	manager := NewManager(testSeed())
+	session, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	rt := manager.sessions[session.ID]
+	action := rt.actions["prepare_pull_locations_full_delete_connector"]
+	if action == nil {
+		t.Fatal("expected prepare_pull_locations_full_delete_connector action")
+	}
+	action.Status = "completed"
+	action.Output = map[string]string{
+		"location_id":  "LOC-1",
+		"evse_uid":     "EVSE-1",
+		"connector_id": "C1",
+	}
+
+	result := rt.cases["pull_locations_full_delete_connector"]
+	if result == nil || len(result.Checkpoints) == 0 {
+		t.Fatal("expected pull_locations_full_delete_connector checkpoint state")
+	}
+	result.Checkpoints[0].Answer = "still present"
+	result.Checkpoints[0].Notes = "before retry"
+	result.Checkpoints[0].Status = "answered"
+
+	manager.activeID = ""
+	rt.session.Status = "completed"
+	rt.session.CurrentStep = SessionStep{
+		Title:       "Session Complete",
+		Description: "All currently included OCPI correctness checks reached a terminal state.",
+	}
+
+	if err := manager.MarkActionStarted(session.ID, "prepare_pull_locations_full_delete_connector"); err != nil {
+		t.Fatalf("rerun action start: %v", err)
+	}
+
+	if manager.activeID != session.ID {
+		t.Fatalf("expected rerun to reactivate session %q, got %q", session.ID, manager.activeID)
+	}
+	if action.Status != "running" {
+		t.Fatalf("expected action status running, got %q", action.Status)
+	}
+	if action.Output["connector_id"] != "C1" {
+		t.Fatalf("expected previous action output to remain available during rerun, got %#v", action.Output)
+	}
+	if result.Checkpoints[0].Answer != "" || result.Checkpoints[0].Notes != "" {
+		t.Fatalf("expected checkpoint answer and notes to reset, got %#v", result.Checkpoints[0])
+	}
+	if result.Checkpoints[0].Status != "pending" {
+		t.Fatalf("expected checkpoint status pending after rerun, got %#v", result.Checkpoints[0])
 	}
 }
 

@@ -254,6 +254,11 @@ func (m *Manager) RecordTrafficEvent(event TrafficEvent) {
 func (m *Manager) MarkActionStarted(sessionID, actionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.activeID != "" && m.activeID != sessionID {
+		return ErrActiveSessionExists
+	}
+
 	rt := m.sessions[sessionID]
 	if rt == nil {
 		return ErrSessionNotFound
@@ -262,11 +267,25 @@ func (m *Manager) MarkActionStarted(sessionID, actionID string) error {
 	if action == nil {
 		return ErrUnknownAction
 	}
+	if action.Status == "running" {
+		return fmt.Errorf("correctness action %s is already running", actionID)
+	}
+	if action.Status == "idle" && rt.session.CurrentStep.ActionID != actionID {
+		current := rt.session.CurrentStep
+		if current.ActionID == "" && current.Title != "" {
+			return fmt.Errorf("finish the current step first: %s", current.Title)
+		}
+		if current.ActionID != "" {
+			return fmt.Errorf("run %s first", current.Title)
+		}
+		return fmt.Errorf("action %s is not ready yet", actionID)
+	}
 	action.Status = "running"
 	action.LastRunAt = nowUTC()
 	action.LastError = ""
-	action.Output = nil
 	action.EventAnchor = len(rt.events)
+	m.resetCheckpointsForActionLocked(rt, actionID)
+	m.activeID = sessionID
 	m.rebuildSessionLocked(rt)
 	return nil
 }
@@ -497,6 +516,24 @@ func (m *Manager) blockingRequirement(rt *sessionRuntime, def CaseDefinition) st
 		}
 	}
 	return ""
+}
+
+func (m *Manager) resetCheckpointsForActionLocked(rt *sessionRuntime, actionID string) {
+	for _, def := range rt.suite.Cases {
+		if !slices.Contains(def.ActionIDs, actionID) {
+			continue
+		}
+		result := rt.cases[def.ID]
+		if result == nil {
+			continue
+		}
+		for i := range result.Checkpoints {
+			result.Checkpoints[i].Answer = ""
+			result.Checkpoints[i].Notes = ""
+			result.Checkpoints[i].Status = "pending"
+			result.Checkpoints[i].UpdatedAt = ""
+		}
+	}
 }
 
 func nextStep(suite SuiteDefinition, session TestSession) SessionStep {

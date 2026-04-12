@@ -168,6 +168,92 @@ func TestRunCorrectnessActionCompletesObserveAction(t *testing.T) {
 	h := testCorrectnessHandler()
 	session := createCorrectnessSessionForTest(t, h)
 
+	if err := h.Correctness.MarkActionStarted(session.ID, "run_handshake"); err != nil {
+		t.Fatalf("start handshake action: %v", err)
+	}
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	if err := overlay.SetTokenB("session-token-b"); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+	if err := h.Correctness.SetPeerState(session.ID, correctness.SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+
+	for _, event := range []correctness.TrafficEvent{
+		{
+			Direction:      "outbound",
+			Method:         "GET",
+			Path:           "/ocpi/versions",
+			RequestHeaders: map[string]string{"authorization": "Token peer-token"},
+			ResponseStatus: 200,
+			ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":[{"version":"2.2.1","url":"https://peer.example.com/ocpi/2.2.1"}]}`,
+			StartedAt:      "2026-01-01T00:00:00Z",
+		},
+		{
+			Direction:      "outbound",
+			Method:         "GET",
+			Path:           "/ocpi/2.2.1",
+			RequestHeaders: map[string]string{"authorization": "Token peer-token"},
+			ResponseStatus: 200,
+			ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"version":"2.2.1","endpoints":[{"identifier":"credentials","role":"RECEIVER","url":"https://peer.example.com/ocpi/2.2.1/credentials"}]}}`,
+			StartedAt:      "2026-01-01T00:00:01Z",
+		},
+		{
+			Direction: "outbound",
+			Method:    "POST",
+			Path:      "/ocpi/2.2.1/credentials",
+			RequestHeaders: map[string]string{
+				"authorization": "Token peer-token",
+				"content-type":  "application/json",
+			},
+			ResponseStatus: 200,
+			ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:02Z","data":{"token":"peer-token-b","url":"https://peer.example.com/ocpi/versions","country_code":"NL","party_id":"EMS"}}`,
+			StartedAt:      "2026-01-01T00:00:02Z",
+		},
+		{
+			Direction: "inbound",
+			Method:    "GET",
+			Path:      "/ocpi/versions",
+			RequestHeaders: map[string]string{
+				"authorization":          "Token session-token-b",
+				"x-request-id":           "req-1",
+				"x-correlation-id":       "corr-1",
+				"ocpi-from-country-code": "NL",
+				"ocpi-from-party-id":     "EMS",
+			},
+			ResponseStatus: 200,
+			ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:03Z","data":[{"version":"2.2.1","url":"https://hub.example.com/ocpi/2.2.1"}]}`,
+			StartedAt:      "2026-01-01T00:00:03Z",
+		},
+		{
+			Direction: "inbound",
+			Method:    "GET",
+			Path:      "/ocpi/2.2.1",
+			RequestHeaders: map[string]string{
+				"authorization":          "Token session-token-b",
+				"x-request-id":           "req-2",
+				"x-correlation-id":       "corr-2",
+				"ocpi-from-country-code": "NL",
+				"ocpi-from-party-id":     "EMS",
+			},
+			ResponseStatus: 200,
+			ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:04Z","data":{"version":"2.2.1","endpoints":[]}}`,
+			StartedAt:      "2026-01-01T00:00:04Z",
+		},
+	} {
+		h.Correctness.RecordTrafficEvent(event)
+	}
+	if _, err := h.Correctness.CompleteAction(session.ID, "run_handshake", map[string]string{"token_b": "session-token-b"}); err != nil {
+		t.Fatalf("complete handshake action: %v", err)
+	}
+
 	w := httptest.NewRecorder()
 	r := withChiParams(httptest.NewRequest("POST", "/admin/test-sessions/"+session.ID+"/actions/arm_pull_locations_full", nil), map[string]string{
 		"sessionID": session.ID,
@@ -196,6 +282,163 @@ func TestRunCorrectnessActionCompletesObserveAction(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("did not find action arm_pull_locations_full in session response")
+	}
+}
+
+func TestRunCorrectnessActionRejectsOutOfSequenceIdleAction(t *testing.T) {
+	h := testCorrectnessHandler()
+	session := createCorrectnessSessionForTest(t, h)
+
+	w := httptest.NewRecorder()
+	r := withChiParams(httptest.NewRequest("POST", "/admin/test-sessions/"+session.ID+"/actions/run_unregister", nil), map[string]string{
+		"sessionID": session.ID,
+		"actionID":  "run_unregister",
+	})
+
+	h.RunCorrectnessAction(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for out-of-sequence action, got %d with body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Run Handshake") {
+		t.Fatalf("expected handshake guidance in error body, got %s", w.Body.String())
+	}
+}
+
+func TestRunCorrectnessHandshakeUsesSessionScopedTokens(t *testing.T) {
+	h := testCorrectnessHandler()
+	h.Config.TokenA = "global-token-a"
+
+	var versionsAuth string
+	var detailsAuth string
+	var credentialsAuth string
+	var postedCredentials credentialsPayload
+
+	var peer *httptest.Server
+	peer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/ocpi/versions":
+			versionsAuth = r.Header.Get("Authorization")
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:00Z",
+				"data": []map[string]string{
+					{"version": "2.2.1", "url": peer.URL + "/ocpi/2.2.1"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/ocpi/2.2.1":
+			detailsAuth = r.Header.Get("Authorization")
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:01Z",
+				"data": map[string]any{
+					"version": "2.2.1",
+					"endpoints": []map[string]string{
+						{"identifier": "credentials", "role": "RECEIVER", "url": peer.URL + "/ocpi/2.2.1/credentials"},
+					},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/ocpi/2.2.1/credentials":
+			credentialsAuth = r.Header.Get("Authorization")
+			if err := json.NewDecoder(r.Body).Decode(&postedCredentials); err != nil {
+				t.Fatalf("decode posted credentials: %v", err)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:02Z",
+				"data": map[string]string{
+					"token":        "peer-token-b",
+					"url":          peer.URL + "/ocpi/versions",
+					"country_code": "NL",
+					"party_id":     "EMS",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer peer.Close()
+
+	session, err := h.Correctness.StartSession(correctness.SessionConfig{
+		PeerVersionsURL: peer.URL + "/ocpi/versions",
+		PeerToken:       "session-peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withChiParams(httptest.NewRequest("POST", "/admin/test-sessions/"+session.ID+"/actions/run_handshake", nil), map[string]string{
+		"sessionID": session.ID,
+		"actionID":  "run_handshake",
+	})
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.Header.Set("X-Rally-Forwarded-Host", "hub.example.com")
+
+	h.RunCorrectnessAction(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("run handshake status: got %d, want 200, body=%s", w.Code, w.Body.String())
+	}
+
+	for name, value := range map[string]string{
+		"versions":    versionsAuth,
+		"details":     detailsAuth,
+		"credentials": credentialsAuth,
+	} {
+		if value != "Token session-peer-token" {
+			t.Fatalf("expected %s request to use the session peer token, got %q", name, value)
+		}
+	}
+
+	if postedCredentials.Token == "" {
+		t.Fatal("expected POST /credentials payload to include a generated session token")
+	}
+	if postedCredentials.Token == h.Config.TokenA {
+		t.Fatalf("expected POST /credentials payload token to differ from global Token A %q", h.Config.TokenA)
+	}
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	tokenB, err := overlay.GetTokenB()
+	if err != nil {
+		t.Fatalf("get overlay tokenB: %v", err)
+	}
+	if tokenB != postedCredentials.Token {
+		t.Fatalf("expected posted credentials token %q to match session tokenB %q", postedCredentials.Token, tokenB)
+	}
+}
+
+func TestPrepareLocationFullDeleteConnectorCanBeRunAgain(t *testing.T) {
+	h := testCorrectnessHandler()
+	session := createCorrectnessSessionForTest(t, h)
+
+	firstSession, err := h.Correctness.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	first, err := h.prepareLocationFullDeleteConnector(firstSession)
+	if err != nil {
+		t.Fatalf("first prepare run: %v", err)
+	}
+	if _, err := h.Correctness.CompleteAction(session.ID, "prepare_pull_locations_full_delete_connector", first); err != nil {
+		t.Fatalf("complete action: %v", err)
+	}
+
+	secondSession, err := h.Correctness.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("get session after first run: %v", err)
+	}
+	second, err := h.prepareLocationFullDeleteConnector(secondSession)
+	if err != nil {
+		t.Fatalf("second prepare run: %v", err)
+	}
+
+	if first["connector_id"] == "" {
+		t.Fatalf("expected connector output from first run, got %#v", first)
+	}
+	if second["connector_id"] != first["connector_id"] || second["evse_uid"] != first["evse_uid"] || second["location_id"] != first["location_id"] {
+		t.Fatalf("expected second prepare run to reuse the same removed connector target, got first=%#v second=%#v", first, second)
 	}
 }
 

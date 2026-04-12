@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/rally-finance/ocpi-mock-hub/correctness"
+	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 )
 
 func authHeader(token string) string {
@@ -74,5 +77,51 @@ func TestGetVersionsAcceptsLiteralBase64LookingTokenA(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+}
+
+func TestGetVersionsAcceptsCorrectnessSessionTokenB(t *testing.T) {
+	manager := correctness.NewManager(&fakegen.SeedData{})
+	session, err := manager.StartSession(correctness.SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	overlay := manager.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	if err := overlay.SetTokenB("correctness-token-b"); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+	if err := manager.SetPeerState(session.ID, correctness.SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+
+	h := &Handler{
+		Config: HandlerConfig{
+			TokenA: "global-token-a",
+		},
+		Store:       newTestStore(),
+		Correctness: manager,
+	}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/versions", nil)
+	req.Host = "inner.example"
+	req.Header.Set("Authorization", "Token correctness-token-b")
+	req.Header.Set("OCPI-From-Country-Code", "NL")
+	req.Header.Set("OCPI-From-Party-Id", "EMS")
+
+	rr := httptest.NewRecorder()
+	h.GetVersions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected correctness session Token B to be accepted, got %d", rr.Code)
 	}
 }

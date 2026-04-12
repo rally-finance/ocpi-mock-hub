@@ -118,3 +118,36 @@ func TestBuiltinSuiteJSONDoesNotContainVendorKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinSuiteOrdersHandshakeBeforeUnregister(t *testing.T) {
+	suite := BuiltinSuites()[0]
+
+	actionIndex := make(map[string]int, len(suite.Actions))
+	for i, action := range suite.Actions {
+		actionIndex[action.ID] = i
+	}
+	for _, actionID := range []string{"run_handshake", "run_unregister"} {
+		if _, ok := actionIndex[actionID]; !ok {
+			t.Fatalf("expected action %q to exist", actionID)
+		}
+	}
+	if actionIndex["run_handshake"] >= actionIndex["run_unregister"] {
+		t.Fatalf("expected run_handshake before run_unregister, got %#v", actionIndex)
+	}
+
+	caseIndex := make(map[string]int, len(suite.Cases))
+	for i, def := range suite.Cases {
+		caseIndex[def.ID] = i
+	}
+	for _, caseID := range []string{"handshake_flow", "peer_fetches_hub_versions", "unregister_flow"} {
+		if _, ok := caseIndex[caseID]; !ok {
+			t.Fatalf("expected case %q to exist", caseID)
+		}
+	}
+	if caseIndex["handshake_flow"] >= caseIndex["peer_fetches_hub_versions"] {
+		t.Fatalf("expected handshake_flow before peer_fetches_hub_versions, got %#v", caseIndex)
+	}
+	if caseIndex["peer_fetches_hub_versions"] >= caseIndex["unregister_flow"] {
+		t.Fatalf("expected unregister_flow to remain at the end of the flow, got %#v", caseIndex)
+	}
+}

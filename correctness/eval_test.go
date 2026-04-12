@@ -1,6 +1,7 @@
 package correctness
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -137,8 +138,9 @@ func TestEvalRemoteStopIgnoresActionDrivenOutboundPostWhenMatchingCallback(t *te
 				ActionID:       "run_session_push_active",
 				Direction:      "outbound",
 				Method:         "POST",
+				URL:            "https://peer.example.com/callback",
 				Path:           "/ocpi/2.2.1/receiver/sessions/NL/EMS/SESS-1",
-				RequestBody:    `{"result":"ACCEPTED"}`,
+				RequestBody:    `{"result":"ACCEPTED","session_id":"SESS-1"}`,
 				ResponseStatus: 200,
 				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"status":"ok"}}`,
 			},
@@ -151,6 +153,119 @@ func TestEvalRemoteStopIgnoresActionDrivenOutboundPostWhenMatchingCallback(t *te
 	}
 	if !containsIssue(eval.Messages, "Waiting for the asynchronous STOP_SESSION callback exchange.") {
 		t.Fatalf("expected pending callback message, got %#v", eval.Messages)
+	}
+}
+
+func TestEvalRemoteStartMatchesCallbackByResponseURL(t *testing.T) {
+	rt := &sessionRuntime{
+		sandbox: NewSandbox(testSeed()),
+		actions: map[string]*ActionState{
+			"arm_remote_start": {
+				ID:          "arm_remote_start",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction: "inbound",
+				Method:    "POST",
+				Path:      "/ocpi/2.2.1/receiver/commands/START_SESSION",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token correctness-token",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				RequestBody:    `{"location_id":"LOC-1","response_url":"https://peer.example.com/callback","token":{"uid":"TOK-1","type":"RFID"}}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":{"result":"ACCEPTED"}}`,
+			},
+			{
+				Direction:      "outbound",
+				Method:         "POST",
+				URL:            "https://peer.example.com/other-callback",
+				Path:           "/other-callback",
+				RequestBody:    `{"result":"ACCEPTED","session_id":"MOCK-1"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"status":"ok"}}`,
+			},
+		},
+	}
+
+	eval := evalRemoteStart(rt, CaseDefinition{})
+	if eval.Status != "pending" {
+		t.Fatalf("expected pending when only a different callback URL exists, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+
+	rt.events = append(rt.events, TrafficEvent{
+		Direction:      "outbound",
+		Method:         "POST",
+		URL:            "https://peer.example.com/callback",
+		Path:           "/callback",
+		RequestBody:    `{"result":"ACCEPTED","session_id":"MOCK-1"}`,
+		ResponseStatus: 200,
+		ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:02Z","data":{"status":"ok"}}`,
+	})
+
+	eval = evalRemoteStart(rt, CaseDefinition{})
+	if eval.Status != "passed" {
+		t.Fatalf("expected passed after the correct callback URL is observed, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+}
+
+func TestEvalRemoteStopFallsBackToStoredSessionCallbackURL(t *testing.T) {
+	sandbox := NewSandbox(testSeed())
+	rawSession, err := json.Marshal(map[string]any{
+		"id":            "SESS-1",
+		"_response_url": "https://peer.example.com/callback",
+	})
+	if err != nil {
+		t.Fatalf("marshal session: %v", err)
+	}
+	sandbox.Store.PutSession("SESS-1", rawSession)
+
+	rt := &sessionRuntime{
+		sandbox: sandbox,
+		actions: map[string]*ActionState{
+			"arm_remote_stop": {
+				ID:          "arm_remote_stop",
+				Status:      "completed",
+				EventAnchor: 0,
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction: "inbound",
+				Method:    "POST",
+				Path:      "/ocpi/2.2.1/receiver/commands/STOP_SESSION",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token correctness-token",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				RequestBody:    `{"session_id":"SESS-1"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":{"result":"ACCEPTED"}}`,
+			},
+			{
+				Direction:      "outbound",
+				Method:         "POST",
+				URL:            "https://peer.example.com/callback",
+				Path:           "/callback",
+				RequestBody:    `{"result":"ACCEPTED","session_id":"SESS-1"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"status":"ok"}}`,
+			},
+		},
+	}
+
+	eval := evalRemoteStop(rt, CaseDefinition{})
+	if eval.Status != "passed" {
+		t.Fatalf("expected passed when STOP_SESSION reuses the stored callback URL, got %q with messages %#v", eval.Status, eval.Messages)
 	}
 }
 

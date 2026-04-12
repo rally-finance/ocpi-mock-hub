@@ -272,9 +272,7 @@ func evalRemoteStart(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 	issues = append(issues, validateCommandPayload(*commandEvent, "START_SESSION", rt.sandbox.Seed)...)
 	issues = append(issues, validateOCPIEnvelopeResponse(*commandEvent, true)...)
 
-	callback := firstMatchingEvent(events, func(event TrafficEvent) bool {
-		return event.Direction == "outbound" && event.Method == "POST" && event.ActionID == "" && strings.Contains(strings.ToLower(event.RequestBody), "accepted")
-	})
+	callback := matchingCommandCallback(rt, events, *commandEvent)
 	if callback == nil {
 		return pendingEvalWithEvidence("Waiting for the asynchronous START_SESSION callback exchange.", *commandEvent)
 	}
@@ -306,9 +304,7 @@ func evalRemoteStop(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 	issues = append(issues, validateCommandPayload(*commandEvent, "STOP_SESSION", rt.sandbox.Seed)...)
 	issues = append(issues, validateOCPIEnvelopeResponse(*commandEvent, true)...)
 
-	callback := firstMatchingEvent(events, func(event TrafficEvent) bool {
-		return event.Direction == "outbound" && event.Method == "POST" && event.ActionID == "" && strings.Contains(strings.ToLower(event.RequestBody), "accepted")
-	})
+	callback := matchingCommandCallback(rt, events, *commandEvent)
 	if callback == nil {
 		return pendingEvalWithEvidence("Waiting for the asynchronous STOP_SESSION callback exchange.", *commandEvent)
 	}
@@ -318,6 +314,62 @@ func evalRemoteStop(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 		return failedEval([]string{"The STOP_SESSION flow did not satisfy the expected command and callback behavior."}, issues, *commandEvent, *callback)
 	}
 	return passedEval("The peer sent a valid STOP_SESSION command and accepted the callback flow.", *commandEvent, *callback)
+}
+
+func matchingCommandCallback(rt *sessionRuntime, events []TrafficEvent, commandEvent TrafficEvent) *TrafficEvent {
+	target := commandCallbackTarget(rt, commandEvent)
+	if target == "" {
+		return nil
+	}
+	return firstMatchingEvent(events, func(event TrafficEvent) bool {
+		return event.Direction == "outbound" &&
+			event.Method == "POST" &&
+			event.ActionID == "" &&
+			normalizeCommandCallbackURL(event.URL) == target &&
+			hasAcceptedCommandResult(event.RequestBody)
+	})
+}
+
+func commandCallbackTarget(rt *sessionRuntime, commandEvent TrafficEvent) string {
+	var payload struct {
+		ResponseURL string `json:"response_url"`
+		SessionID   string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(commandEvent.RequestBody), &payload); err != nil {
+		return ""
+	}
+	if target := normalizeCommandCallbackURL(payload.ResponseURL); target != "" {
+		return target
+	}
+	if payload.SessionID == "" || rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
+		return ""
+	}
+
+	raw, _ := rt.sandbox.Store.GetSession(payload.SessionID)
+	if raw == nil {
+		return ""
+	}
+	var session struct {
+		ResponseURL string `json:"_response_url"`
+	}
+	if err := json.Unmarshal(raw, &session); err != nil {
+		return ""
+	}
+	return normalizeCommandCallbackURL(session.ResponseURL)
+}
+
+func normalizeCommandCallbackURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func hasAcceptedCommandResult(body string) bool {
+	var payload struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(payload.Result), "ACCEPTED")
 }
 
 func evalEVSEStatusUnknown(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {

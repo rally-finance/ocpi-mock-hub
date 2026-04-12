@@ -69,7 +69,7 @@ func (s *handshakeTestStore) ListSessions() ([][]byte, error) {
 }
 func (s *handshakeTestStore) DeleteSession(id string) error      { delete(s.sessions, id); return nil }
 func (s *handshakeTestStore) PutCDR(id string, cdr []byte) error { s.cdrs[id] = cdr; return nil }
-func (s *handshakeTestStore) GetCDR(id string) ([]byte, error)  { return s.cdrs[id], nil }
+func (s *handshakeTestStore) GetCDR(id string) ([]byte, error)   { return s.cdrs[id], nil }
 func (s *handshakeTestStore) ListCDRs() ([][]byte, error) {
 	var out [][]byte
 	for _, v := range s.cdrs {
@@ -77,10 +77,10 @@ func (s *handshakeTestStore) ListCDRs() ([][]byte, error) {
 	}
 	return out, nil
 }
-func (s *handshakeTestStore) PutReservation(id string, data []byte) error              { return nil }
-func (s *handshakeTestStore) GetReservation(id string) ([]byte, error)                 { return nil, nil }
-func (s *handshakeTestStore) ListReservations() ([][]byte, error)                      { return nil, nil }
-func (s *handshakeTestStore) DeleteReservation(id string) error                        { return nil }
+func (s *handshakeTestStore) PutReservation(id string, data []byte) error               { return nil }
+func (s *handshakeTestStore) GetReservation(id string) ([]byte, error)                  { return nil, nil }
+func (s *handshakeTestStore) ListReservations() ([][]byte, error)                       { return nil, nil }
+func (s *handshakeTestStore) DeleteReservation(id string) error                         { return nil }
 func (s *handshakeTestStore) PutChargingProfile(sessionID string, profile []byte) error { return nil }
 func (s *handshakeTestStore) GetChargingProfile(sessionID string) ([]byte, error)       { return nil, nil }
 func (s *handshakeTestStore) DeleteChargingProfile(sessionID string) error              { return nil }

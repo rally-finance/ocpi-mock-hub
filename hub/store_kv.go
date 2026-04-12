@@ -100,9 +100,9 @@ func (r *RedisStore) listByPrefix(pattern string) ([][]byte, error) {
 // Store interface implementation
 
 func (r *RedisStore) GetTokenB() (string, error)          { return r.get("handshake:token_b") }
-func (r *RedisStore) SetTokenB(token string) error         { return r.set("handshake:token_b", token) }
-func (r *RedisStore) GetEMSPCallbackURL() (string, error)  { return r.get("handshake:emsp_url") }
-func (r *RedisStore) SetEMSPCallbackURL(url string) error  { return r.set("handshake:emsp_url", url) }
+func (r *RedisStore) SetTokenB(token string) error        { return r.set("handshake:token_b", token) }
+func (r *RedisStore) GetEMSPCallbackURL() (string, error) { return r.get("handshake:emsp_url") }
+func (r *RedisStore) SetEMSPCallbackURL(url string) error { return r.set("handshake:emsp_url", url) }
 func (r *RedisStore) GetEMSPCredentials() ([]byte, error) {
 	v, err := r.get("handshake:emsp_creds")
 	return []byte(v), err
@@ -198,9 +198,13 @@ func (r *RedisStore) DeleteReservation(id string) error {
 func (r *RedisStore) PutParty(key string, state []byte) error {
 	// Remove stale tokenB index if the party already exists with a different TokenB
 	if existing, _ := r.get("party:" + key); existing != "" {
-		var old struct{ TokenB string `json:"token_b"` }
+		var old struct {
+			TokenB string `json:"token_b"`
+		}
 		if json.Unmarshal([]byte(existing), &old) == nil && old.TokenB != "" {
-			var incoming struct{ TokenB string `json:"token_b"` }
+			var incoming struct {
+				TokenB string `json:"token_b"`
+			}
 			if json.Unmarshal(state, &incoming) == nil && incoming.TokenB != old.TokenB {
 				r.del("tokenb:" + old.TokenB)
 			}
@@ -210,7 +214,9 @@ func (r *RedisStore) PutParty(key string, state []byte) error {
 	if err := r.set("party:"+key, string(state)); err != nil {
 		return err
 	}
-	var p struct{ TokenB string `json:"token_b"` }
+	var p struct {
+		TokenB string `json:"token_b"`
+	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
 		return r.set("tokenb:"+p.TokenB, key)
 	}
@@ -236,7 +242,9 @@ func (r *RedisStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
 func (r *RedisStore) DeleteParty(key string) error {
 	raw, _ := r.GetParty(key)
 	if raw != nil {
-		var p struct{ TokenB string `json:"token_b"` }
+		var p struct {
+			TokenB string `json:"token_b"`
+		}
 		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
 			r.del("tokenb:" + p.TokenB)
 		}

@@ -60,9 +60,9 @@ func FaultModeMiddleware(h *Handler) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 
 			case "partial":
-			pw := wrapPartialWriter(w)
-			next.ServeHTTP(pw, r)
-			pw.flushTruncated()
+				pw := wrapPartialWriter(w)
+				next.ServeHTTP(pw, r)
+				pw.flushTruncated()
 
 			case "rate-limit":
 				if rand.Float64() < 0.5 {

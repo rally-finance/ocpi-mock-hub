@@ -1,27 +1,20 @@
 package hub
 
 import (
-	"encoding/base64"
 	"net/http"
 	"strings"
 
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
-func parseToken(header string) string {
-	if header == "" {
-		return ""
+func matchesAnyPartyToken(app *App, header string) bool {
+	for _, candidate := range ocpiutil.AuthTokenCandidates(header) {
+		party, _ := app.Store.GetPartyByTokenB(candidate)
+		if party != nil {
+			return true
+		}
 	}
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "token") {
-		return ""
-	}
-	raw := strings.TrimSpace(parts[1])
-	decoded, err := base64.StdEncoding.DecodeString(raw)
-	if err == nil && len(decoded) > 0 {
-		return string(decoded)
-	}
-	return raw
+	return false
 }
 
 func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
@@ -40,8 +33,8 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 				return
 			}
 
-			provided := parseToken(r.Header.Get("Authorization"))
-			if provided == "" {
+			authHeader := r.Header.Get("Authorization")
+			if len(ocpiutil.AuthTokenCandidates(authHeader)) == 0 {
 				ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Missing authorization token")
 				return
 			}
@@ -49,8 +42,11 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 			tokenB, err := app.Store.GetTokenB()
 			if err != nil || tokenB == "" {
 				// Try multi-party lookup
-				party, _ := app.Store.GetPartyByTokenB(provided)
-				if party != nil {
+				if matchesAnyPartyToken(app, authHeader) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if app.Correctness != nil && app.Correctness.MatchesInboundRequest(r) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -58,10 +54,13 @@ func TokenAuthMiddleware(app *App) func(http.Handler) http.Handler {
 				return
 			}
 
-			if provided != tokenB {
+			if !ocpiutil.AuthHeaderMatchesToken(authHeader, tokenB) {
 				// Try multi-party lookup
-				party, _ := app.Store.GetPartyByTokenB(provided)
-				if party != nil {
+				if matchesAnyPartyToken(app, authHeader) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if app.Correctness != nil && app.Correctness.MatchesInboundRequest(r) {
 					next.ServeHTTP(w, r)
 					return
 				}

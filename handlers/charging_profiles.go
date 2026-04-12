@@ -11,9 +11,10 @@ import (
 )
 
 func (h *Handler) PutChargingProfile(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	sessionID := chi.URLParam(r, "sessionID")
 
-	raw, err := h.Store.GetSession(sessionID)
+	raw, err := store.GetSession(sessionID)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to check session")
 		return
@@ -38,7 +39,7 @@ func (h *Handler) PutChargingProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Store.PutChargingProfile(sessionID, payload.ChargingProfile)
+	store.PutChargingProfile(sessionID, payload.ChargingProfile)
 	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 
 	if payload.ResponseURL != "" {
@@ -50,15 +51,15 @@ func (h *Handler) PutChargingProfile(w http.ResponseWriter, r *http.Request) {
 				},
 			}
 			cbData, _ := json.Marshal(callback)
-			req, err := http.NewRequest("POST", payload.ResponseURL, bytes.NewReader(cbData))
+			req, err := http.NewRequestWithContext(h.outboundContext("charging_profile_callback"), "POST", payload.ResponseURL, bytes.NewReader(cbData))
 			if err != nil {
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
-			if token, _ := h.Store.GetEMSPOwnToken(); token != "" {
+			if token, _ := store.GetEMSPOwnToken(); token != "" {
 				req.Header.Set("Authorization", "Token "+token)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := h.outboundClient().Do(req)
 			if err == nil {
 				resp.Body.Close()
 			}
@@ -67,9 +68,10 @@ func (h *Handler) PutChargingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetChargingProfile(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	sessionID := chi.URLParam(r, "sessionID")
 
-	profile, err := h.Store.GetChargingProfile(sessionID)
+	profile, err := store.GetChargingProfile(sessionID)
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get profile")
 		return
@@ -83,7 +85,7 @@ func (h *Handler) GetChargingProfile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		result["profile"] = map[string]any{
 			"charging_profile": map[string]any{
-				"charging_rate_unit":     "W",
+				"charging_rate_unit":      "W",
 				"charging_profile_period": []map[string]any{},
 			},
 		}
@@ -93,8 +95,9 @@ func (h *Handler) GetChargingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteChargingProfile(w http.ResponseWriter, r *http.Request) {
+	store := h.storeForRequest(r)
 	sessionID := chi.URLParam(r, "sessionID")
 
-	h.Store.DeleteChargingProfile(sessionID)
+	store.DeleteChargingProfile(sessionID)
 	ocpiutil.OK(w, r, map[string]string{"result": "ACCEPTED"})
 }

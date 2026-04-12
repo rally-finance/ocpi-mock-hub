@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rally-finance/ocpi-mock-hub/correctness"
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 )
 
@@ -126,6 +127,22 @@ func TestPostCredentials_StillExemptFromTokenB(t *testing.T) {
 	}
 }
 
+func TestTokenAuthMiddlewareAcceptsLiteralBase64LookingTokenB(t *testing.T) {
+	app := testApp()
+	app.Store.SetTokenB("dG9rZW4tYi0xMjM=")
+	router := NewRouter(app)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/locations", nil)
+	r.Header.Set("Authorization", "Token dG9rZW4tYi0xMjM=")
+
+	router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /sender/locations with literal base64-looking Token B: got %d, want 200", w.Code)
+	}
+}
+
 func TestOCPIFromHeaders_SetOnOCPIResponse(t *testing.T) {
 	app := testApp()
 	app.Store.SetTokenB("valid-token-b")
@@ -188,6 +205,77 @@ func TestOCPIFromHeaders_NotSetOnAdminResponse(t *testing.T) {
 
 	if fromCC := w.Header().Get("OCPI-From-Country-Code"); fromCC != "" {
 		t.Errorf("expected no OCPI-From-Country-Code on admin endpoint, got %q", fromCC)
+	}
+}
+
+func TestCorrectnessSessionTrafficUsesOverlayWhileRegularTrafficUsesBaseStore(t *testing.T) {
+	store := NewMemoryStore()
+	store.SetTokenB("base-token")
+	seed := fakegen.GenerateSeed(2)
+	baseName := seed.Locations[0].Name
+
+	manager := correctness.NewManager(seed)
+	session, err := manager.StartSession(correctness.SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start correctness session: %v", err)
+	}
+	if err := manager.ActiveOverlay().SetTokenB("correctness-token"); err != nil {
+		t.Fatalf("set correctness tokenB: %v", err)
+	}
+	if err := manager.SetPeerState(session.ID, correctness.SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+	if err := manager.UpdateSandbox(session.ID, func(sandbox *correctness.Sandbox) error {
+		sandbox.Seed.Locations[0].Name = "Correctness Overlay Location"
+		return nil
+	}); err != nil {
+		t.Fatalf("update correctness sandbox: %v", err)
+	}
+
+	app := &App{
+		Config: Config{
+			TokenA:     "test-token-a",
+			HubCountry: "DE",
+			HubParty:   "HUB",
+		},
+		Store:       store,
+		BaseStore:   store,
+		Seed:        seed,
+		Correctness: manager,
+	}
+	router := NewRouter(app)
+
+	baseReq := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/locations", nil)
+	baseReq.Header.Set("Authorization", "Token base-token")
+	baseResp := httptest.NewRecorder()
+	router.ServeHTTP(baseResp, baseReq)
+	if baseResp.Code != http.StatusOK {
+		t.Fatalf("base request status: got %d, want 200", baseResp.Code)
+	}
+	if !strings.Contains(baseResp.Body.String(), baseName) {
+		t.Fatalf("expected base response to include base seed location name %q", baseName)
+	}
+	if strings.Contains(baseResp.Body.String(), "Correctness Overlay Location") {
+		t.Fatal("did not expect base request to use correctness overlay seed")
+	}
+
+	correctnessReq := httptest.NewRequest("GET", "/ocpi/2.2.1/sender/locations", nil)
+	correctnessReq.Header.Set("Authorization", "Token correctness-token")
+	correctnessReq.Header.Set("OCPI-From-Country-Code", "NL")
+	correctnessReq.Header.Set("OCPI-From-Party-Id", "EMS")
+	correctnessResp := httptest.NewRecorder()
+	router.ServeHTTP(correctnessResp, correctnessReq)
+	if correctnessResp.Code != http.StatusOK {
+		t.Fatalf("correctness request status: got %d, want 200", correctnessResp.Code)
+	}
+	if !strings.Contains(correctnessResp.Body.String(), "Correctness Overlay Location") {
+		t.Fatal("expected correctness-scoped request to use the overlay seed")
 	}
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,13 +71,13 @@ func (h *Handler) InitiateHandshake(w http.ResponseWriter, r *http.Request) {
 	h.Store.SetEMSPOwnToken(payload.EMSPOwnToken)
 	h.Store.SetEMSPVersionsURL(versionsURL)
 
-	versionDetailURL, err := h.discoverVersion(versionsURL, payload.EMSPOwnToken)
+	versionDetailURL, err := h.discoverVersion(context.Background(), versionsURL, payload.EMSPOwnToken)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, initiateHandshakeResult{Error: fmt.Sprintf("version discovery failed: %v", err)})
 		return
 	}
 
-	credentialsURL, err := h.discoverCredentialsEndpoint(versionDetailURL, payload.EMSPOwnToken)
+	credentialsURL, err := h.discoverCredentialsEndpoint(context.Background(), versionDetailURL, payload.EMSPOwnToken)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, initiateHandshakeResult{Error: fmt.Sprintf("endpoint discovery failed: %v", err)})
 		return
@@ -118,7 +119,7 @@ func (h *Handler) InitiateHandshake(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	emspCreds, err := h.postCredentials(credentialsURL, payload.EMSPOwnToken, credsBody)
+	emspCreds, err := h.postCredentials(context.Background(), credentialsURL, payload.EMSPOwnToken, credsBody)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, initiateHandshakeResult{Error: fmt.Sprintf("credentials exchange failed: %v", err)})
 		return
@@ -148,14 +149,14 @@ func (h *Handler) handshakeAdvertisedVersionsURL(scheme, host string) string {
 	return scheme + "://" + host + "/ocpi/versions"
 }
 
-func (h *Handler) discoverVersion(versionsURL, token string) (string, error) {
-	req, err := http.NewRequest("GET", versionsURL, nil)
+func (h *Handler) discoverVersion(ctx context.Context, versionsURL, token string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", versionsURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Token "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.outboundClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("GET %s: %w", versionsURL, err)
 	}
@@ -180,27 +181,10 @@ func (h *Handler) discoverVersion(versionsURL, token string) (string, error) {
 	return "", fmt.Errorf("version 2.2.1 not found in %d versions", len(versions.Data))
 }
 
-func (h *Handler) discoverCredentialsEndpoint(versionDetailURL, token string) (string, error) {
-	req, err := http.NewRequest("GET", versionDetailURL, nil)
+func (h *Handler) discoverCredentialsEndpoint(ctx context.Context, versionDetailURL, token string) (string, error) {
+	detail, err := h.fetchVersionDetails(ctx, versionDetailURL, token)
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Token "+token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", versionDetailURL, err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s returned %d: %s", versionDetailURL, resp.StatusCode, string(body))
-	}
-
-	var detail ocpiVersionDetailResponse
-	if err := json.Unmarshal(body, &detail); err != nil {
-		return "", fmt.Errorf("parse version detail: %w", err)
+		return "", err
 	}
 
 	for _, ep := range detail.Data.Endpoints {
@@ -212,20 +196,46 @@ func (h *Handler) discoverCredentialsEndpoint(versionDetailURL, token string) (s
 	return "", fmt.Errorf("credentials endpoint not found in version details")
 }
 
-func (h *Handler) postCredentials(credentialsURL, token string, creds credentialsPayload) (*ocpiCredentialsResponse, error) {
+func (h *Handler) fetchVersionDetails(ctx context.Context, versionDetailURL, token string) (*ocpiVersionDetailResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", versionDetailURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Token "+token)
+
+	resp, err := h.outboundClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", versionDetailURL, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s returned %d: %s", versionDetailURL, resp.StatusCode, string(body))
+	}
+
+	var detail ocpiVersionDetailResponse
+	if err := json.Unmarshal(body, &detail); err != nil {
+		return nil, fmt.Errorf("parse version detail: %w", err)
+	}
+
+	return &detail, nil
+}
+
+func (h *Handler) postCredentials(ctx context.Context, credentialsURL, token string, creds credentialsPayload) (*ocpiCredentialsResponse, error) {
 	payload, err := json.Marshal(creds)
 	if err != nil {
 		return nil, fmt.Errorf("marshal credentials: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", credentialsURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", credentialsURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Token "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.outboundClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("POST %s: %w", credentialsURL, err)
 	}

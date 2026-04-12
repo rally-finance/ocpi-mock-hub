@@ -32,11 +32,11 @@ type PushConfig struct {
 }
 
 type PushSummary struct {
-	Total    int           `json:"total"`
-	OK       int           `json:"ok"`
-	Failed   int           `json:"failed"`
-	Duration int64         `json:"duration_ms"`
-	Results  []PushResult  `json:"results"`
+	Total    int          `json:"total"`
+	OK       int          `json:"ok"`
+	Failed   int          `json:"failed"`
+	Duration int64        `json:"duration_ms"`
+	Results  []PushResult `json:"results"`
 }
 
 var evseStatuses = []string{"AVAILABLE", "CHARGING", "BLOCKED", "OUTOFORDER", "AVAILABLE", "AVAILABLE"}
@@ -117,7 +117,7 @@ func doPush(method, url, tokenB string, payload any) PushResult {
 	}
 
 	start := time.Now()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient().Do(req)
 	dur := time.Since(start).Milliseconds()
 
 	if err != nil {

@@ -1,15 +1,20 @@
 package handlers
 
 import (
+	"net/http"
+
+	"github.com/rally-finance/ocpi-mock-hub/correctness"
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 )
 
 // Handler holds dependencies for all OCPI route handlers.
 type Handler struct {
-	Config HandlerConfig
-	Store  Store
-	Seed   *fakegen.SeedData
-	ReqLog *RequestLog
+	Config      HandlerConfig
+	Store       Store
+	Seed        *fakegen.SeedData
+	ReqLog      *RequestLog
+	Correctness *correctness.Manager
+	HTTPClient  *http.Client
 }
 
 type HandlerConfig struct {
@@ -61,6 +66,13 @@ type Store interface {
 	SetMode(mode string) error
 }
 
-func New(cfg HandlerConfig, s Store, seed *fakegen.SeedData, reqLog *RequestLog) *Handler {
-	return &Handler{Config: cfg, Store: s, Seed: seed, ReqLog: reqLog}
+func New(cfg HandlerConfig, s Store, seed *fakegen.SeedData, reqLog *RequestLog, manager *correctness.Manager, client *http.Client) *Handler {
+	return &Handler{
+		Config:      cfg,
+		Store:       s,
+		Seed:        seed,
+		ReqLog:      reqLog,
+		Correctness: manager,
+		HTTPClient:  client,
+	}
 }

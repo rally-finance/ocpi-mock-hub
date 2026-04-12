@@ -6,20 +6,20 @@ import (
 )
 
 type MemoryStore struct {
-	mu                sync.RWMutex
-	tokenB            string
+	mu               sync.RWMutex
+	tokenB           string
 	emspCallbackURL  string
 	emspCreds        []byte
 	emspOwnToken     string
 	emspVersionsURL  string
-	parties           map[string][]byte  // key: "CC/PID" -> JSON
-	tokenBIndex       map[string]string  // tokenB -> party key
-	tokens            map[string][]byte      // key: "cc/pid/uid"
-	sessions          map[string][]byte      // key: session ID
-	cdrs              map[string][]byte      // key: CDR ID
-	reservations      map[string][]byte      // key: reservation ID
-	chargingProfiles  map[string][]byte      // key: session ID
-	mode              string
+	parties          map[string][]byte // key: "CC/PID" -> JSON
+	tokenBIndex      map[string]string // tokenB -> party key
+	tokens           map[string][]byte // key: "cc/pid/uid"
+	sessions         map[string][]byte // key: session ID
+	cdrs             map[string][]byte // key: CDR ID
+	reservations     map[string][]byte // key: reservation ID
+	chargingProfiles map[string][]byte // key: session ID
+	mode             string
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -105,13 +105,17 @@ func (m *MemoryStore) PutParty(key string, state []byte) error {
 	defer m.mu.Unlock()
 	// Remove old tokenB index entry
 	if old, ok := m.parties[key]; ok {
-		var prev struct{ TokenB string `json:"token_b"` }
+		var prev struct {
+			TokenB string `json:"token_b"`
+		}
 		if json.Unmarshal(old, &prev) == nil && prev.TokenB != "" {
 			delete(m.tokenBIndex, prev.TokenB)
 		}
 	}
 	m.parties[key] = state
-	var p struct{ TokenB string `json:"token_b"` }
+	var p struct {
+		TokenB string `json:"token_b"`
+	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
 		m.tokenBIndex[p.TokenB] = key
 	}
@@ -138,7 +142,9 @@ func (m *MemoryStore) DeleteParty(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if old, ok := m.parties[key]; ok {
-		var p struct{ TokenB string `json:"token_b"` }
+		var p struct {
+			TokenB string `json:"token_b"`
+		}
 		if json.Unmarshal(old, &p) == nil && p.TokenB != "" {
 			delete(m.tokenBIndex, p.TokenB)
 		}

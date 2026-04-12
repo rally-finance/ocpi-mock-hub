@@ -1167,6 +1167,10 @@ function escAttr(s) {
     .replaceAll('>', '&gt;');
 }
 
+function correctnessCheckpointFieldId(kind, checkpointID) {
+  return `correctness-${kind}-${encodeURIComponent(String(checkpointID || ''))}`;
+}
+
 function fmtTime(iso) {
   if (!iso) return '—';
   try {
@@ -1387,7 +1391,10 @@ function renderCorrectnessCheckpoints() {
     return;
   }
 
-  root.innerHTML = pending.map(({ result, checkpoint }) => `
+  root.innerHTML = pending.map(({ result, checkpoint }) => {
+    const answerID = correctnessCheckpointFieldId('answer', checkpoint.id);
+    const notesID = correctnessCheckpointFieldId('notes', checkpoint.id);
+    return `
     <div class="panel-item">
       <div class="panel-title">
         <div>
@@ -1400,23 +1407,24 @@ function renderCorrectnessCheckpoints() {
       <div class="checkpoint-form">
         <input
           type="text"
-          id="correctness-answer-${escAttr(checkpoint.id)}"
+          id="${escAttr(answerID)}"
           placeholder="${escAttr(checkpoint.placeholder || 'Add your observation')}"
           value="${escAttr(checkpoint.answer || '')}"
         />
         <input
           type="text"
-          id="correctness-notes-${escAttr(checkpoint.id)}"
+          id="${escAttr(notesID)}"
           placeholder="Optional notes"
           value="${escAttr(checkpoint.notes || '')}"
         />
         <div class="action-controls" style="margin-top:2px">
           <span class="meta">Only use manual confirmation when the traffic log cannot prove the behavior on its own.</span>
-          <button onclick="submitCorrectnessCheckpoint('${escAttr(checkpoint.id)}')">Save</button>
+          <button data-checkpoint-id="${escAttr(checkpoint.id)}" onclick="submitCorrectnessCheckpoint(this.dataset.checkpointId)">Save</button>
         </div>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderCorrectnessCases() {
@@ -1613,8 +1621,8 @@ async function submitCorrectnessCheckpoint(checkpointID) {
     toast('Select a session first.', 'error');
     return;
   }
-  const answer = document.getElementById(`correctness-answer-${checkpointID}`)?.value?.trim() || '';
-  const notes = document.getElementById(`correctness-notes-${checkpointID}`)?.value?.trim() || '';
+  const answer = document.getElementById(correctnessCheckpointFieldId('answer', checkpointID))?.value?.trim() || '';
+  const notes = document.getElementById(correctnessCheckpointFieldId('notes', checkpointID))?.value?.trim() || '';
   if (!answer) {
     toast('Add an observation before saving the checkpoint.', 'error');
     return;

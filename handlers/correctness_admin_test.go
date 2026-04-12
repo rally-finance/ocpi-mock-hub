@@ -407,6 +407,107 @@ func TestRunCorrectnessHandshakeUsesSessionScopedTokens(t *testing.T) {
 	if tokenB != postedCredentials.Token {
 		t.Fatalf("expected posted credentials token %q to match session tokenB %q", postedCredentials.Token, tokenB)
 	}
+	if party, err := h.Store.GetPartyByTokenB(postedCredentials.Token); err != nil || party == nil {
+		t.Fatalf("expected posted credentials token %q to be registered in shared store, got party=%v err=%v", postedCredentials.Token, party != nil, err)
+	}
+}
+
+func TestRunCorrectnessHandshakeRegistersTokenBeforePeerImmediatelyFetchesVersions(t *testing.T) {
+	baseStore := newTestStore()
+	seed := &fakegen.SeedData{}
+
+	h := &Handler{
+		Config: HandlerConfig{
+			TokenA:     "global-token-a",
+			HubCountry: "NL",
+			HubParty:   "HUB",
+		},
+		Store:       baseStore,
+		Seed:        seed,
+		ReqLog:      NewRequestLog(),
+		Correctness: correctness.NewManager(seed),
+	}
+	otherInstance := &Handler{
+		Config: HandlerConfig{
+			TokenA: "global-token-a",
+		},
+		Store: baseStore,
+	}
+
+	var followUpStatus int
+	var followUpBody string
+
+	var peer *httptest.Server
+	peer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/ocpi/versions":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:00Z",
+				"data": []map[string]string{
+					{"version": "2.2.1", "url": peer.URL + "/ocpi/2.2.1"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/ocpi/2.2.1":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:01Z",
+				"data": map[string]any{
+					"version": "2.2.1",
+					"endpoints": []map[string]string{
+						{"identifier": "credentials", "role": "RECEIVER", "url": peer.URL + "/ocpi/2.2.1/credentials"},
+					},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/ocpi/2.2.1/credentials":
+			var payload credentialsPayload
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode posted credentials: %v", err)
+			}
+
+			followUpReq := httptest.NewRequest(http.MethodGet, "http://hub.example.com/ocpi/versions", nil)
+			followUpReq.Host = "hub.example.com"
+			followUpReq.Header.Set("Authorization", "Token "+payload.Token)
+			followUpRes := httptest.NewRecorder()
+			otherInstance.GetVersions(followUpRes, followUpReq)
+			followUpStatus = followUpRes.Code
+			followUpBody = followUpRes.Body.String()
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status_code": 1000,
+				"timestamp":   "2026-01-01T00:00:02Z",
+				"data": map[string]string{
+					"token":        "peer-token-b",
+					"url":          peer.URL + "/ocpi/versions",
+					"country_code": "NL",
+					"party_id":     "EMS",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer peer.Close()
+
+	session, err := h.Correctness.StartSession(correctness.SessionConfig{
+		PeerVersionsURL: peer.URL + "/ocpi/versions",
+		PeerToken:       "session-peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://hub.example.com/admin/test-sessions/"+session.ID+"/actions/run_handshake", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Rally-Forwarded-Host", "hub.example.com")
+
+	if _, err := h.correctnessRunHandshake(req, session); err != nil {
+		t.Fatalf("run handshake: %v", err)
+	}
+
+	if followUpStatus != http.StatusOK {
+		t.Fatalf("expected immediate follow-up GET /ocpi/versions on another instance to succeed, got %d with body %s", followUpStatus, followUpBody)
+	}
 }
 
 func TestPrepareLocationFullDeleteConnectorCanBeRunAgain(t *testing.T) {

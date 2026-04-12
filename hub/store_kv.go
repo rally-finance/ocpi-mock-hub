@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -95,6 +96,55 @@ func (r *RedisStore) listByPrefix(pattern string) ([][]byte, error) {
 		}
 	}
 	return result, nil
+}
+
+func blobKey(key string) string {
+	return "blob:" + key
+}
+
+func (r *RedisStore) GetBlob(key string) ([]byte, error) {
+	v, err := r.get(blobKey(key))
+	if v == "" {
+		return nil, err
+	}
+	return []byte(v), err
+}
+
+func (r *RedisStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	redisKey := blobKey(key)
+
+	for attempts := 0; attempts < 5; attempts++ {
+		err := r.rdb.Watch(r.ctx(), func(tx *redis.Tx) error {
+			raw, err := tx.Get(r.ctx(), redisKey).Bytes()
+			if err != nil && err != redis.Nil {
+				return err
+			}
+			if err == redis.Nil {
+				raw = nil
+			}
+
+			next, err := fn(raw)
+			if err != nil {
+				return err
+			}
+
+			_, err = tx.TxPipelined(r.ctx(), func(pipe redis.Pipeliner) error {
+				if next == nil {
+					pipe.Del(r.ctx(), redisKey)
+					return nil
+				}
+				pipe.Set(r.ctx(), redisKey, next, 0)
+				return nil
+			})
+			return err
+		}, redisKey)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		return err
+	}
+
+	return fmt.Errorf("update blob %q: too many concurrent retries", key)
 }
 
 // Store interface implementation

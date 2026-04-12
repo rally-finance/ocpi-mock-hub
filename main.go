@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/rally-finance/ocpi-mock-hub/correctness"
@@ -17,6 +18,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize app: %v", err)
 	}
+	if !cfg.UseRedis() && (os.Getenv("VERCEL") != "" || os.Getenv("VERCEL_ENV") != "") {
+		log.Printf("[warning] REDIS_URL is not configured; request logs, OCPI correctness sessions, and mutable hub state remain per-instance on Vercel")
+	}
 	router := hub.NewRouter(app)
 	simulation.SetHTTPClient(correctness.NewHTTPClient(app.Correctness, nil))
 
@@ -28,7 +32,7 @@ func main() {
 				log.Printf("[tick] error: %v", err)
 			}
 			if overlay := app.Correctness.ActiveOverlay(); overlay != nil {
-				correctnessSim := simulation.New(overlay, app.CurrentSeed(), cfg.EMSPCallbackURL, cfg.CommandDelayMS, cfg.SessionDurationS)
+				correctnessSim := simulation.New(overlay, app.CurrentSeed(), "", cfg.CommandDelayMS, cfg.SessionDurationS)
 				if err := correctnessSim.Tick(); err != nil {
 					log.Printf("[correctness tick] error: %v", err)
 				}

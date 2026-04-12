@@ -1245,6 +1245,10 @@ function hasActiveCorrectnessSession() {
   return correctnessSessions.some(session => session.status === 'running');
 }
 
+function hasOtherActiveCorrectnessSession() {
+  return correctnessSessions.some(session => session.status === 'running' && session.id !== selectedCorrectnessSessionId);
+}
+
 function selectedCorrectnessSnapshot() {
   return correctnessSessions.find(session => session.id === selectedCorrectnessSessionId) || null;
 }
@@ -1357,10 +1361,14 @@ function renderCorrectnessActions() {
   }
 
   const recommendedActionID = correctnessSession.current_step?.action_id || '';
-  const sessionComplete = correctnessSession.status === 'completed';
+  const anotherSessionIsActive = hasOtherActiveCorrectnessSession();
 
   root.innerHTML = correctnessSession.actions.map(action => {
-    const canRun = !sessionComplete && action.status !== 'running' && action.status !== 'completed';
+    const isIdle = action.status === 'idle';
+    const isRerunnable = action.status === 'completed' || action.status === 'failed';
+    const canRun = !anotherSessionIsActive
+      && action.status !== 'running'
+      && (isRerunnable || (isIdle && recommendedActionID === action.id));
     const feedback = action.last_error
       ? `<div class="meta" style="color:var(--red);margin-top:8px">${esc(action.last_error)}</div>`
       : action.output && Object.keys(action.output).length
@@ -1380,12 +1388,14 @@ function renderCorrectnessActions() {
             <div>${esc(action.description)}</div>
             <div class="badge-row" style="margin-top:8px">
               ${recommendedActionID === action.id ? '<span class="badge badge-blue">Recommended next step</span>' : ''}
+              ${isIdle && recommendedActionID && recommendedActionID !== action.id ? '<span class="badge badge-blue">Runs later in sequence</span>' : ''}
+              ${isRerunnable ? '<span class="badge badge-blue">Can be rerun</span>' : ''}
               ${action.last_run_at ? `<span class="badge badge-blue">Last run ${esc(fmtTime(action.last_run_at))}</span>` : ''}
             </div>
             ${feedback}
           </div>
           <button ${canRun ? '' : 'disabled'} onclick="runCorrectnessAction('${escAttr(action.id)}')">
-            ${action.status === 'failed' ? 'Retry' : 'Run'}
+            ${action.status === 'failed' ? 'Retry' : action.status === 'completed' ? 'Run Again' : 'Run'}
           </button>
         </div>
       </div>

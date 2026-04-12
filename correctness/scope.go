@@ -14,8 +14,11 @@ func (m *Manager) MatchesInboundRequest(r *http.Request) bool {
 		return false
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
+		return false
+	}
 
 	rt := m.sessions[m.activeID]
 	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
@@ -37,8 +40,11 @@ func (m *Manager) ShouldCaptureInboundRequest(r *http.Request) bool {
 		return true
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
+		return false
+	}
 
 	rt := m.sessions[m.activeID]
 	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
@@ -53,8 +59,11 @@ func (m *Manager) ShouldCaptureOutboundRequest(req *http.Request) bool {
 		return false
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
+		return false
+	}
 
 	rt := m.sessions[m.activeID]
 	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {

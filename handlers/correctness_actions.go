@@ -107,10 +107,14 @@ func (h *Handler) correctnessRunHandshake(r *http.Request, session *correctness.
 			return nil, err
 		}
 	}
+	advertisedVersionsURL := h.correctnessAdvertisedVersionsURL(r)
+	if err := h.registerCorrectnessPeerToken(session, tokenB, advertisedVersionsURL, "", session.Peer, session.Config.PeerToken); err != nil {
+		return nil, err
+	}
 
 	credsBody := credentialsPayload{
 		Token:       tokenB,
-		URL:         h.correctnessAdvertisedVersionsURL(r),
+		URL:         advertisedVersionsURL,
 		CountryCode: h.Config.HubCountry,
 		PartyID:     h.Config.HubParty,
 		BusinessDetails: &struct {
@@ -164,6 +168,15 @@ func (h *Handler) correctnessRunHandshake(r *http.Request, session *correctness.
 	}); err != nil {
 		return nil, err
 	}
+	if err := h.registerCorrectnessPeerToken(session, tokenB, advertisedVersionsURL, peerCreds.Data.URL, correctness.SessionPeerState{
+		VersionDetailURL: versionDetailURL,
+		CredentialsURL:   credentialsURL,
+		CountryCode:      peerCreds.Data.CountryCode,
+		PartyID:          peerCreds.Data.PartyID,
+		Endpoints:        peerEndpoints,
+	}, storeTokenOrFallback(store, session.Config.PeerToken)); err != nil {
+		return nil, err
+	}
 
 	return map[string]string{
 		"version_detail_url": versionDetailURL,
@@ -195,6 +208,7 @@ func (h *Handler) correctnessRunUnregister(session *correctness.TestSession) (ma
 		return nil, err
 	}
 	resp.Body.Close()
+	h.unregisterCorrectnessPeerToken(session.ID)
 	return map[string]string{"credentials_url": session.Peer.CredentialsURL}, nil
 }
 
@@ -606,6 +620,17 @@ func actionOutput(session *correctness.TestSession, actionID string) map[string]
 		}
 	}
 	return nil
+}
+
+func storeTokenOrFallback(store Store, fallback string) string {
+	if store == nil {
+		return fallback
+	}
+	token, err := store.GetEMSPOwnToken()
+	if err != nil || token == "" {
+		return fallback
+	}
+	return token
 }
 
 func (h *Handler) correctnessAdvertisedVersionsURL(r *http.Request) string {

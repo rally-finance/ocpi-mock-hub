@@ -7,6 +7,8 @@ import (
 
 type MemoryStore struct {
 	mu               sync.RWMutex
+	blobs            map[string][]byte
+	blobLocks        sync.Map
 	tokenB           string
 	emspCallbackURL  string
 	emspCreds        []byte
@@ -24,6 +26,7 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
+		blobs:            make(map[string][]byte),
 		parties:          make(map[string][]byte),
 		tokenBIndex:      make(map[string]string),
 		tokens:           make(map[string][]byte),
@@ -33,6 +36,43 @@ func NewMemoryStore() *MemoryStore {
 		chargingProfiles: make(map[string][]byte),
 		mode:             "happy",
 	}
+}
+
+func (m *MemoryStore) GetBlob(key string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	val := m.blobs[key]
+	if val == nil {
+		return nil, nil
+	}
+	return append([]byte(nil), val...), nil
+}
+
+func (m *MemoryStore) blobLock(key string) *sync.Mutex {
+	lock, _ := m.blobLocks.LoadOrStore(key, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func (m *MemoryStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	lock := m.blobLock(key)
+	lock.Lock()
+	defer lock.Unlock()
+
+	m.mu.RLock()
+	current := append([]byte(nil), m.blobs[key]...)
+	m.mu.RUnlock()
+	next, err := fn(current)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if next == nil {
+		delete(m.blobs, key)
+		return nil
+	}
+	m.blobs[key] = append([]byte(nil), next...)
+	return nil
 }
 
 func (m *MemoryStore) GetTokenB() (string, error) {

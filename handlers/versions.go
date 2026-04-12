@@ -53,7 +53,8 @@ func (h *Handler) GetVersionDetails(w http.ResponseWriter, r *http.Request) {
 
 // verifyTokenA checks the Authorization header against Token A.
 // Returns true if valid, writes an error response and returns false otherwise.
-// Also accepts Token B if the handshake is already done (for GET requests).
+// Also accepts Token B from the active local session or from persisted party
+// state so follow-up discovery requests can succeed immediately.
 func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 	authHeader := r.Header.Get("Authorization")
 	if len(ocpiutil.AuthTokenCandidates(authHeader)) == 0 {
@@ -69,6 +70,14 @@ func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 	tokenB, _ := h.storeForRequest(r).GetTokenB()
 	if tokenB != "" && ocpiutil.AuthHeaderMatchesToken(authHeader, tokenB) {
 		return true
+	}
+	if h != nil && h.Store != nil {
+		for _, candidate := range ocpiutil.AuthTokenCandidates(authHeader) {
+			party, _ := h.Store.GetPartyByTokenB(candidate)
+			if party != nil {
+				return true
+			}
+		}
 	}
 
 	ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Invalid authorization token")

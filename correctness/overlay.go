@@ -3,313 +3,433 @@ package correctness
 import (
 	"encoding/json"
 	"strings"
-	"sync"
 
 	"github.com/rally-finance/ocpi-mock-hub/fakegen"
 )
 
-type OverlayStore struct {
-	mu               sync.RWMutex
-	tokenB           string
-	callbackURL      string
-	credentials      []byte
-	emspToken        string
-	versionsURL      string
-	mode             string
-	parties          map[string][]byte
-	tokenBIndex      map[string]string
-	tokens           map[string][]byte
-	sessions         map[string][]byte
-	cdrs             map[string][]byte
-	reservations     map[string][]byte
-	chargingProfiles map[string][]byte
+type overlayState struct {
+	TokenB           string            `json:"token_b,omitempty"`
+	CallbackURL      string            `json:"callback_url,omitempty"`
+	Credentials      []byte            `json:"credentials,omitempty"`
+	EMSPToken        string            `json:"emsp_token,omitempty"`
+	VersionsURL      string            `json:"versions_url,omitempty"`
+	Mode             string            `json:"mode,omitempty"`
+	Parties          map[string][]byte `json:"parties,omitempty"`
+	TokenBIndex      map[string]string `json:"token_b_index,omitempty"`
+	Tokens           map[string][]byte `json:"tokens,omitempty"`
+	Sessions         map[string][]byte `json:"sessions,omitempty"`
+	CDRs             map[string][]byte `json:"cdrs,omitempty"`
+	Reservations     map[string][]byte `json:"reservations,omitempty"`
+	ChargingProfiles map[string][]byte `json:"charging_profiles,omitempty"`
 }
 
-func NewOverlayStore() *OverlayStore {
-	return &OverlayStore{
-		parties:          make(map[string][]byte),
-		tokenBIndex:      make(map[string]string),
-		tokens:           make(map[string][]byte),
-		sessions:         make(map[string][]byte),
-		cdrs:             make(map[string][]byte),
-		reservations:     make(map[string][]byte),
-		chargingProfiles: make(map[string][]byte),
-		mode:             "happy",
+type OverlayStore struct {
+	stateStore StateStore
+	key        string
+}
+
+func NewOverlayStore(stateStore StateStore, sessionID string) *OverlayStore {
+	if stateStore == nil {
+		stateStore = newMemoryStateStore()
 	}
+	return &OverlayStore{
+		stateStore: stateStore,
+		key:        overlayBlobKey(sessionID),
+	}
+}
+
+func overlayBlobKey(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	return overlayStateBlobKeyPrefix + sessionID
+}
+
+func defaultOverlayState() overlayState {
+	return overlayState{
+		Parties:          make(map[string][]byte),
+		TokenBIndex:      make(map[string]string),
+		Tokens:           make(map[string][]byte),
+		Sessions:         make(map[string][]byte),
+		CDRs:             make(map[string][]byte),
+		Reservations:     make(map[string][]byte),
+		ChargingProfiles: make(map[string][]byte),
+		Mode:             "happy",
+	}
+}
+
+func decodeOverlayState(raw []byte) (overlayState, error) {
+	state := defaultOverlayState()
+	if len(raw) == 0 {
+		return state, nil
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return overlayState{}, err
+	}
+	if state.Parties == nil {
+		state.Parties = make(map[string][]byte)
+	}
+	if state.TokenBIndex == nil {
+		state.TokenBIndex = make(map[string]string)
+	}
+	if state.Tokens == nil {
+		state.Tokens = make(map[string][]byte)
+	}
+	if state.Sessions == nil {
+		state.Sessions = make(map[string][]byte)
+	}
+	if state.CDRs == nil {
+		state.CDRs = make(map[string][]byte)
+	}
+	if state.Reservations == nil {
+		state.Reservations = make(map[string][]byte)
+	}
+	if state.ChargingProfiles == nil {
+		state.ChargingProfiles = make(map[string][]byte)
+	}
+	if state.Mode == "" {
+		state.Mode = "happy"
+	}
+	return state, nil
+}
+
+func encodeOverlayState(state overlayState) ([]byte, error) {
+	if state.Mode == "" {
+		state.Mode = "happy"
+	}
+	if state.Parties == nil {
+		state.Parties = make(map[string][]byte)
+	}
+	if state.TokenBIndex == nil {
+		state.TokenBIndex = make(map[string]string)
+	}
+	if state.Tokens == nil {
+		state.Tokens = make(map[string][]byte)
+	}
+	if state.Sessions == nil {
+		state.Sessions = make(map[string][]byte)
+	}
+	if state.CDRs == nil {
+		state.CDRs = make(map[string][]byte)
+	}
+	if state.Reservations == nil {
+		state.Reservations = make(map[string][]byte)
+	}
+	if state.ChargingProfiles == nil {
+		state.ChargingProfiles = make(map[string][]byte)
+	}
+	return json.Marshal(state)
+}
+
+func (o *OverlayStore) getState() (overlayState, error) {
+	raw, err := o.stateStore.GetBlob(o.key)
+	if err != nil {
+		return overlayState{}, err
+	}
+	return decodeOverlayState(raw)
+}
+
+func (o *OverlayStore) updateState(fn func(*overlayState) error) error {
+	return o.stateStore.UpdateBlob(o.key, func(raw []byte) ([]byte, error) {
+		state, err := decodeOverlayState(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := fn(&state); err != nil {
+			return nil, err
+		}
+		return encodeOverlayState(state)
+	})
+}
+
+func copyBytes(src []byte) []byte {
+	if src == nil {
+		return nil
+	}
+	return append([]byte(nil), src...)
 }
 
 func (o *OverlayStore) GetTokenB() (string, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.tokenB, nil
+	state, err := o.getState()
+	if err != nil {
+		return "", err
+	}
+	return state.TokenB, nil
 }
 
 func (o *OverlayStore) SetTokenB(token string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.tokenB = token
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.TokenB = token
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetEMSPCallbackURL() (string, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.callbackURL, nil
+	state, err := o.getState()
+	if err != nil {
+		return "", err
+	}
+	return state.CallbackURL, nil
 }
 
 func (o *OverlayStore) SetEMSPCallbackURL(url string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.callbackURL = url
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.CallbackURL = url
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetEMSPCredentials() ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return append([]byte(nil), o.credentials...), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyBytes(state.Credentials), nil
 }
 
 func (o *OverlayStore) SetEMSPCredentials(creds []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.credentials = append([]byte(nil), creds...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.Credentials = copyBytes(creds)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetEMSPOwnToken() (string, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.emspToken, nil
+	state, err := o.getState()
+	if err != nil {
+		return "", err
+	}
+	return state.EMSPToken, nil
 }
 
 func (o *OverlayStore) SetEMSPOwnToken(token string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.emspToken = token
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.EMSPToken = token
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetEMSPVersionsURL() (string, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.versionsURL, nil
+	state, err := o.getState()
+	if err != nil {
+		return "", err
+	}
+	return state.VersionsURL, nil
 }
 
 func (o *OverlayStore) SetEMSPVersionsURL(url string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.versionsURL = url
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.VersionsURL = url
+		return nil
+	})
 }
 
-func (o *OverlayStore) PutParty(key string, state []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if prev, ok := o.parties[key]; ok {
-		var old struct {
+func (o *OverlayStore) PutParty(key string, payload []byte) error {
+	return o.updateState(func(state *overlayState) error {
+		if prev, ok := state.Parties[key]; ok {
+			var old struct {
+				TokenB string `json:"token_b"`
+			}
+			if json.Unmarshal(prev, &old) == nil && old.TokenB != "" {
+				delete(state.TokenBIndex, old.TokenB)
+			}
+		}
+		state.Parties[key] = copyBytes(payload)
+		var next struct {
 			TokenB string `json:"token_b"`
 		}
-		if json.Unmarshal(prev, &old) == nil && old.TokenB != "" {
-			delete(o.tokenBIndex, old.TokenB)
+		if json.Unmarshal(payload, &next) == nil && next.TokenB != "" {
+			state.TokenBIndex[next.TokenB] = key
 		}
-	}
-	o.parties[key] = append([]byte(nil), state...)
-	var next struct {
-		TokenB string `json:"token_b"`
-	}
-	if json.Unmarshal(state, &next) == nil && next.TokenB != "" {
-		o.tokenBIndex[next.TokenB] = key
-	}
-	return nil
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetParty(key string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.parties[key]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.Parties[key]), nil
 }
 
 func (o *OverlayStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	key, ok := o.tokenBIndex[tokenB]
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	key, ok := state.TokenBIndex[tokenB]
 	if !ok {
 		return nil, nil
 	}
-	val := o.parties[key]
-	if val == nil {
-		return nil, nil
-	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.Parties[key]), nil
 }
 
 func (o *OverlayStore) DeleteParty(key string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if prev, ok := o.parties[key]; ok {
-		var old struct {
-			TokenB string `json:"token_b"`
+	return o.updateState(func(state *overlayState) error {
+		if prev, ok := state.Parties[key]; ok {
+			var old struct {
+				TokenB string `json:"token_b"`
+			}
+			if json.Unmarshal(prev, &old) == nil && old.TokenB != "" {
+				delete(state.TokenBIndex, old.TokenB)
+			}
 		}
-		if json.Unmarshal(prev, &old) == nil && old.TokenB != "" {
-			delete(o.tokenBIndex, old.TokenB)
-		}
-	}
-	delete(o.parties, key)
-	return nil
+		delete(state.Parties, key)
+		return nil
+	})
 }
 
 func (o *OverlayStore) ListParties() ([][]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return copyMapValues(o.parties), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyMapValues(state.Parties), nil
 }
 
 func (o *OverlayStore) PutToken(cc, pid, uid string, token []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.tokens[tokenKey(cc, pid, uid)] = append([]byte(nil), token...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.Tokens[tokenKey(cc, pid, uid)] = copyBytes(token)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetToken(cc, pid, uid string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.tokens[tokenKey(cc, pid, uid)]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.Tokens[tokenKey(cc, pid, uid)]), nil
 }
 
 func (o *OverlayStore) ListTokens() ([][]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return copyMapValues(o.tokens), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyMapValues(state.Tokens), nil
 }
 
 func (o *OverlayStore) PutSession(id string, session []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.sessions[id] = append([]byte(nil), session...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.Sessions[id] = copyBytes(session)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetSession(id string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.sessions[id]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.Sessions[id]), nil
 }
 
 func (o *OverlayStore) ListSessions() ([][]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return copyMapValues(o.sessions), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyMapValues(state.Sessions), nil
 }
 
 func (o *OverlayStore) DeleteSession(id string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	delete(o.sessions, id)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		delete(state.Sessions, id)
+		return nil
+	})
 }
 
 func (o *OverlayStore) PutCDR(id string, cdr []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.cdrs[id] = append([]byte(nil), cdr...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.CDRs[id] = copyBytes(cdr)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetCDR(id string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.cdrs[id]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.CDRs[id]), nil
 }
 
 func (o *OverlayStore) ListCDRs() ([][]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return copyMapValues(o.cdrs), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyMapValues(state.CDRs), nil
 }
 
 func (o *OverlayStore) PutReservation(id string, reservation []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.reservations[id] = append([]byte(nil), reservation...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.Reservations[id] = copyBytes(reservation)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetReservation(id string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.reservations[id]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.Reservations[id]), nil
 }
 
 func (o *OverlayStore) ListReservations() ([][]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return copyMapValues(o.reservations), nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
+	}
+	return copyMapValues(state.Reservations), nil
 }
 
 func (o *OverlayStore) DeleteReservation(id string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	delete(o.reservations, id)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		delete(state.Reservations, id)
+		return nil
+	})
 }
 
 func (o *OverlayStore) PutChargingProfile(sessionID string, profile []byte) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.chargingProfiles[sessionID] = append([]byte(nil), profile...)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.ChargingProfiles[sessionID] = copyBytes(profile)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetChargingProfile(sessionID string) ([]byte, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	val := o.chargingProfiles[sessionID]
-	if val == nil {
-		return nil, nil
+	state, err := o.getState()
+	if err != nil {
+		return nil, err
 	}
-	return append([]byte(nil), val...), nil
+	return copyBytes(state.ChargingProfiles[sessionID]), nil
 }
 
 func (o *OverlayStore) DeleteChargingProfile(sessionID string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	delete(o.chargingProfiles, sessionID)
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		delete(state.ChargingProfiles, sessionID)
+		return nil
+	})
 }
 
 func (o *OverlayStore) GetMode() (string, error) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.mode, nil
+	state, err := o.getState()
+	if err != nil {
+		return "", err
+	}
+	return state.Mode, nil
 }
 
 func (o *OverlayStore) SetMode(mode string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.mode = mode
-	return nil
+	return o.updateState(func(state *overlayState) error {
+		state.Mode = mode
+		return nil
+	})
 }
 
 func copyMapValues(src map[string][]byte) [][]byte {
@@ -330,9 +450,13 @@ type Sandbox struct {
 }
 
 func NewSandbox(base *fakegen.SeedData) *Sandbox {
+	return newSessionSandbox(base, nil, "")
+}
+
+func newSessionSandbox(base *fakegen.SeedData, stateStore StateStore, sessionID string) *Sandbox {
 	return &Sandbox{
 		Seed:  CloneSeed(base),
-		Store: NewOverlayStore(),
+		Store: NewOverlayStore(stateStore, sessionID),
 	}
 }
 

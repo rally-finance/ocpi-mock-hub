@@ -1,18 +1,65 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
-const maxLogEntries = 500
+const (
+	maxLogEntries    = 500
+	requestLogBlobKey = "request-log"
+)
 
 var ignoredPaths = map[string]bool{
 	"/":            true,
 	"/favicon.ico": true,
 	"/robots.txt":  true,
+}
+
+type RequestLogStateStore interface {
+	GetBlob(key string) ([]byte, error)
+	UpdateBlob(key string, fn func([]byte) ([]byte, error)) error
+}
+
+type requestLogMemoryStore struct {
+	mu    sync.Mutex
+	blobs map[string][]byte
+}
+
+func newRequestLogMemoryStore() *requestLogMemoryStore {
+	return &requestLogMemoryStore{
+		blobs: make(map[string][]byte),
+	}
+}
+
+func (m *requestLogMemoryStore) GetBlob(key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	val := m.blobs[key]
+	if val == nil {
+		return nil, nil
+	}
+	return append([]byte(nil), val...), nil
+}
+
+func (m *requestLogMemoryStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current := append([]byte(nil), m.blobs[key]...)
+	next, err := fn(current)
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		delete(m.blobs, key)
+		return nil
+	}
+	m.blobs[key] = append([]byte(nil), next...)
+	return nil
 }
 
 type RequestLogEntry struct {
@@ -25,48 +72,65 @@ type RequestLogEntry struct {
 	OCPITo     string `json:"ocpi_to,omitempty"`
 }
 
-type RequestLog struct {
-	mu      sync.RWMutex
-	entries []RequestLogEntry
-	pos     int
-	full    bool
+type requestLogState struct {
+	Entries []RequestLogEntry `json:"entries"`
 }
 
-func NewRequestLog() *RequestLog {
-	return &RequestLog{
-		entries: make([]RequestLogEntry, maxLogEntries),
+type RequestLog struct {
+	stateStore RequestLogStateStore
+}
+
+func NewRequestLog(stores ...RequestLogStateStore) *RequestLog {
+	var stateStore RequestLogStateStore
+	if len(stores) > 0 && stores[0] != nil {
+		stateStore = stores[0]
+	} else {
+		stateStore = newRequestLogMemoryStore()
 	}
+	return &RequestLog{stateStore: stateStore}
+}
+
+func decodeRequestLogState(raw []byte) (requestLogState, error) {
+	if len(raw) == 0 {
+		return requestLogState{}, nil
+	}
+	var state requestLogState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return requestLogState{}, err
+	}
+	return state, nil
 }
 
 func (rl *RequestLog) Add(entry RequestLogEntry) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	rl.entries[rl.pos] = entry
-	rl.pos = (rl.pos + 1) % maxLogEntries
-	if rl.pos == 0 {
-		rl.full = true
+	if rl == nil || rl.stateStore == nil {
+		return
 	}
+	_ = rl.stateStore.UpdateBlob(requestLogBlobKey, func(raw []byte) ([]byte, error) {
+		state, err := decodeRequestLogState(raw)
+		if err != nil {
+			return nil, err
+		}
+		entries := append([]RequestLogEntry{entry}, state.Entries...)
+		if len(entries) > maxLogEntries {
+			entries = entries[:maxLogEntries]
+		}
+		return json.Marshal(requestLogState{Entries: entries})
+	})
 }
 
 func (rl *RequestLog) Entries() []RequestLogEntry {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-
-	var result []RequestLogEntry
-	if rl.full {
-		result = make([]RequestLogEntry, maxLogEntries)
-		copy(result, rl.entries[rl.pos:])
-		copy(result[maxLogEntries-rl.pos:], rl.entries[:rl.pos])
-	} else {
-		result = make([]RequestLogEntry, rl.pos)
-		copy(result, rl.entries[:rl.pos])
+	if rl == nil || rl.stateStore == nil {
+		return nil
 	}
-
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
+	raw, err := rl.stateStore.GetBlob(requestLogBlobKey)
+	if err != nil {
+		return nil
 	}
-
-	return result
+	state, err := decodeRequestLogState(raw)
+	if err != nil {
+		return nil
+	}
+	return append([]RequestLogEntry(nil), state.Entries...)
 }
 
 type statusCapture struct {
@@ -117,3 +181,4 @@ func (h *Handler) GetRequestLog(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, h.ReqLog.Entries())
 }
+

@@ -17,6 +17,10 @@ type PartyState struct {
 // - MemoryStore for standalone/local dev
 // - RedisStore for deployed environments (requires REDIS_URL)
 type Store interface {
+	// Generic blobs for shared multi-instance state.
+	GetBlob(key string) ([]byte, error)
+	UpdateBlob(key string, fn func([]byte) ([]byte, error)) error
+
 	// Handshake state (single-party shims — delegate to default party)
 	GetTokenB() (string, error)
 	SetTokenB(token string) error

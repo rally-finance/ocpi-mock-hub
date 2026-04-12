@@ -23,7 +23,7 @@ func NewApp(cfg Config) (*App, error) {
 		store.SetMode(cfg.Mode)
 	}
 	seed := fakegen.GenerateSeed(cfg.SeedLocations)
-	manager := correctness.NewManager(seed)
+	manager := correctness.NewManager(seed, store)
 	return &App{
 		Config:      cfg,
 		Store:       store,

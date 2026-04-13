@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -163,4 +164,81 @@ func TestShouldCaptureInboundRequestIncludesHandshakeDiscoveryCandidateUsingPeer
 	if !manager.ShouldCaptureInboundRequest(req) {
 		t.Fatal("expected handshake discovery candidate using the peer token to be captured for evaluation")
 	}
+}
+
+func TestShouldCaptureInboundRequestLoadsManagerStateOnce(t *testing.T) {
+	store := newCountingStateStore()
+	manager := NewManager(testSeed(), store)
+	session, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	overlay := manager.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	if err := overlay.SetTokenB("correctness-token"); err != nil {
+		t.Fatalf("set tokenB: %v", err)
+	}
+	if err := manager.SetPeerState(session.ID, SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+
+	store.reset()
+
+	req := httptest.NewRequest("GET", "http://hub.example.com/ocpi/2.2.1/sender/locations", nil)
+	req.Header.Set("Authorization", "Token some-other-token")
+	req.Header.Set("OCPI-From-Country-Code", "NL")
+	req.Header.Set("OCPI-From-Party-Id", "EMS")
+
+	if manager.ShouldCaptureInboundRequest(req) {
+		t.Fatal("expected unrelated inbound request not to be captured")
+	}
+	if got := store.getCount(managerStateBlobKey); got != 1 {
+		t.Fatalf("expected one manager-state load, got %d", got)
+	}
+}
+
+type countingStateStore struct {
+	base StateStore
+
+	mu   sync.Mutex
+	gets map[string]int
+}
+
+func newCountingStateStore() *countingStateStore {
+	return &countingStateStore{
+		base: newMemoryStateStore(),
+		gets: make(map[string]int),
+	}
+}
+
+func (s *countingStateStore) GetBlob(key string) ([]byte, error) {
+	s.mu.Lock()
+	s.gets[key]++
+	s.mu.Unlock()
+	return s.base.GetBlob(key)
+}
+
+func (s *countingStateStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	return s.base.UpdateBlob(key, fn)
+}
+
+func (s *countingStateStore) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gets = make(map[string]int)
+}
+
+func (s *countingStateStore) getCount(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gets[key]
 }

@@ -3,14 +3,16 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	maxLogEntries    = 500
-	requestLogBlobKey = "request-log"
+	maxLogEntries         = 500
+	requestLogMetaBlobKey = "request-log:meta"
+	requestLogEntryPrefix = "request-log:entry:"
 )
 
 var ignoredPaths = map[string]bool{
@@ -73,7 +75,14 @@ type RequestLogEntry struct {
 }
 
 type requestLogState struct {
-	Entries []RequestLogEntry `json:"entries"`
+	LastSequence int64 `json:"last_sequence"`
+	NextIndex    int   `json:"next_index"`
+	Count        int   `json:"count"`
+}
+
+type requestLogSlot struct {
+	Sequence int64           `json:"sequence"`
+	Entry    RequestLogEntry `json:"entry"`
 }
 
 type RequestLog struct {
@@ -101,20 +110,56 @@ func decodeRequestLogState(raw []byte) (requestLogState, error) {
 	return state, nil
 }
 
+func decodeRequestLogSlot(raw []byte) (requestLogSlot, error) {
+	if len(raw) == 0 {
+		return requestLogSlot{}, nil
+	}
+	var slot requestLogSlot
+	if err := json.Unmarshal(raw, &slot); err != nil {
+		return requestLogSlot{}, err
+	}
+	return slot, nil
+}
+
+func requestLogEntryBlobKey(index int) string {
+	return requestLogEntryPrefix + strconv.Itoa(index)
+}
+
 func (rl *RequestLog) Add(entry RequestLogEntry) {
 	if rl == nil || rl.stateStore == nil {
 		return
 	}
-	_ = rl.stateStore.UpdateBlob(requestLogBlobKey, func(raw []byte) ([]byte, error) {
+
+	var writeIndex int
+	var sequence int64
+	if err := rl.stateStore.UpdateBlob(requestLogMetaBlobKey, func(raw []byte) ([]byte, error) {
 		state, err := decodeRequestLogState(raw)
 		if err != nil {
 			return nil, err
 		}
-		entries := append([]RequestLogEntry{entry}, state.Entries...)
-		if len(entries) > maxLogEntries {
-			entries = entries[:maxLogEntries]
+
+		writeIndex = state.NextIndex
+		state.LastSequence++
+		sequence = state.LastSequence
+		state.NextIndex = (state.NextIndex + 1) % maxLogEntries
+		if state.Count < maxLogEntries {
+			state.Count++
 		}
-		return json.Marshal(requestLogState{Entries: entries})
+		return json.Marshal(state)
+	}); err != nil {
+		return
+	}
+
+	payload, err := json.Marshal(requestLogSlot{
+		Sequence: sequence,
+		Entry:    entry,
+	})
+	if err != nil {
+		return
+	}
+
+	_ = rl.stateStore.UpdateBlob(requestLogEntryBlobKey(writeIndex), func([]byte) ([]byte, error) {
+		return payload, nil
 	})
 }
 
@@ -122,7 +167,7 @@ func (rl *RequestLog) Entries() []RequestLogEntry {
 	if rl == nil || rl.stateStore == nil {
 		return nil
 	}
-	raw, err := rl.stateStore.GetBlob(requestLogBlobKey)
+	raw, err := rl.stateStore.GetBlob(requestLogMetaBlobKey)
 	if err != nil {
 		return nil
 	}
@@ -130,7 +175,27 @@ func (rl *RequestLog) Entries() []RequestLogEntry {
 	if err != nil {
 		return nil
 	}
-	return append([]RequestLogEntry(nil), state.Entries...)
+
+	entries := make([]RequestLogEntry, 0, state.Count)
+	for i := 0; i < state.Count; i++ {
+		index := (state.NextIndex - 1 - i + maxLogEntries) % maxLogEntries
+		expectedSequence := state.LastSequence - int64(i)
+
+		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(index))
+		if err != nil {
+			continue
+		}
+		slot, err := decodeRequestLogSlot(slotRaw)
+		if err != nil {
+			continue
+		}
+		if slot.Sequence != expectedSequence {
+			continue
+		}
+		entries = append(entries, slot.Entry)
+	}
+
+	return entries
 }
 
 type statusCapture struct {
@@ -181,4 +246,3 @@ func (h *Handler) GetRequestLog(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, h.ReqLog.Entries())
 }
-

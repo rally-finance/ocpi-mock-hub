@@ -164,6 +164,47 @@ func TestCreateCorrectnessSessionRejectsSecondActiveSession(t *testing.T) {
 	}
 }
 
+func TestDeleteCorrectnessSessionRemovesActiveSessionAndSharedPartyState(t *testing.T) {
+	h := testCorrectnessHandler()
+	session := createCorrectnessSessionForTest(t, h)
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	if err := overlay.SetTokenB("session-token-b"); err != nil {
+		t.Fatalf("set overlay tokenB: %v", err)
+	}
+	if err := h.registerCorrectnessPeerToken(&session, "session-token-b", "https://hub.example.com/ocpi/versions", "", correctness.SessionPeerState{
+		CountryCode: "NL",
+		PartyID:     "EMS",
+	}, "peer-token"); err != nil {
+		t.Fatalf("register correctness peer token: %v", err)
+	}
+	if party, err := h.Store.GetPartyByTokenB("session-token-b"); err != nil || party == nil {
+		t.Fatalf("expected shared party state before delete, got party=%v err=%v", party != nil, err)
+	}
+
+	w := httptest.NewRecorder()
+	r := withChiParams(httptest.NewRequest("DELETE", "/admin/test-sessions/"+session.ID, nil), map[string]string{
+		"sessionID": session.ID,
+	})
+	h.DeleteCorrectnessSession(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete session status: got %d, want 200, body=%s", w.Code, w.Body.String())
+	}
+
+	if _, err := h.Correctness.GetSession(session.ID); err == nil {
+		t.Fatal("expected deleted correctness session to be removed")
+	}
+	if active := h.Correctness.ActiveSessionID(); active != "" {
+		t.Fatalf("expected active correctness session to clear, got %q", active)
+	}
+	if party, err := h.Store.GetPartyByTokenB("session-token-b"); err != nil || party != nil {
+		t.Fatalf("expected shared party state to be removed, got party=%v err=%v", party != nil, err)
+	}
+}
+
 func TestRunCorrectnessActionCompletesObserveAction(t *testing.T) {
 	h := testCorrectnessHandler()
 	session := createCorrectnessSessionForTest(t, h)

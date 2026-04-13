@@ -367,6 +367,54 @@ func TestManagerPersistsAcrossInstances(t *testing.T) {
 	}
 }
 
+func TestManagerDeleteSessionRemovesActiveSessionAndOverlayState(t *testing.T) {
+	store := newMemoryStateStore()
+	manager := NewManager(testSeed(), store)
+
+	session, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	overlay := manager.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	if err := overlay.SetTokenB("session-token-b"); err != nil {
+		t.Fatalf("set overlay tokenB: %v", err)
+	}
+	if raw, err := store.GetBlob(overlayBlobKey(session.ID)); err != nil || len(raw) == 0 {
+		t.Fatalf("expected overlay blob to exist before delete, got len=%d err=%v", len(raw), err)
+	}
+
+	if err := manager.DeleteSession(session.ID); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if _, err := manager.GetSession(session.ID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("expected deleted session to be gone, got %v", err)
+	}
+	if manager.ActiveSessionID() != "" {
+		t.Fatalf("expected active session ID to clear after delete, got %q", manager.ActiveSessionID())
+	}
+	if raw, err := store.GetBlob(overlayBlobKey(session.ID)); err != nil || len(raw) != 0 {
+		t.Fatalf("expected overlay blob to be removed after delete, got len=%d err=%v", len(raw), err)
+	}
+
+	restarted, err := manager.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session after delete: %v", err)
+	}
+	if restarted.ID == session.ID {
+		t.Fatalf("expected a fresh session after delete, got reused ID %q", restarted.ID)
+	}
+}
+
 func TestNextStepSkipsBlockedCaseActions(t *testing.T) {
 	suite := SuiteDefinition{
 		Cases: []CaseDefinition{

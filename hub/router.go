@@ -100,6 +100,7 @@ func NewRouter(app *App) http.Handler {
 	r.Get("/admin/test-sessions", h.ListCorrectnessSessions)
 	r.Post("/admin/test-sessions", h.CreateCorrectnessSession)
 	r.Get("/admin/test-sessions/{sessionID}", h.GetCorrectnessSession)
+	r.Delete("/admin/test-sessions/{sessionID}", h.DeleteCorrectnessSession)
 	r.Post("/admin/test-sessions/{sessionID}/actions/{actionID}", h.RunCorrectnessAction)
 	r.Post("/admin/test-sessions/{sessionID}/checkpoints/{checkpointID}", h.SubmitCorrectnessCheckpoint)
 	r.Post("/admin/test-sessions/{sessionID}/rerun", h.RerunCorrectnessSession)

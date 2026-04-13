@@ -39,6 +39,24 @@ func (h *Handler) GetCorrectnessSession(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, session)
 }
 
+func (h *Handler) DeleteCorrectnessSession(w http.ResponseWriter, r *http.Request) {
+	if h.Correctness == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "correctness manager not configured"})
+		return
+	}
+	sessionID := chi.URLParam(r, "sessionID")
+	if err := h.Correctness.DeleteSession(sessionID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, correctness.ErrSessionNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	h.unregisterCorrectnessPeerToken(sessionID)
+	writeJSON(w, http.StatusOK, map[string]string{"deleted_session_id": sessionID})
+}
+
 func (h *Handler) CreateCorrectnessSession(w http.ResponseWriter, r *http.Request) {
 	if h.Correctness == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "correctness manager not configured"})

@@ -320,11 +320,12 @@ func evalRemoteStart(rt *sessionRuntime, def CaseDefinition) CaseEvaluation {
 		return event.Direction == "inbound" && event.Method == "POST" && event.Path == "/ocpi/2.2.1/receiver/commands/START_SESSION"
 	})
 	if commandEvent == nil {
-		return pendingEval("Waiting for the peer to send START_SESSION.")
+		return pendingEval(remoteStartPendingMessage(action.Output))
 	}
 	var issues []string
 	issues = append(issues, validateInboundOCPIRequest(*commandEvent, true)...)
 	issues = append(issues, validateCommandPayload(*commandEvent, "START_SESSION", rt.sandbox.Seed)...)
+	issues = append(issues, validateStartSessionExpectations(*commandEvent, action.Output)...)
 	issues = append(issues, validateOCPIEnvelopeResponse(*commandEvent, true)...)
 
 	callback := matchingCommandCallback(rt, events, *commandEvent)
@@ -510,12 +511,12 @@ func evalInboundTokenPush(rt *sessionRuntime, def CaseDefinition, actionID strin
 		return event.Direction == "inbound" && event.Method == "PUT" && strings.HasPrefix(event.Path, "/ocpi/2.2.1/receiver/tokens/")
 	})
 	if event == nil {
-		return pendingEval("Waiting for the peer to push a Token object.")
+		return pendingEval(tokenPushPendingMessage(action.Output, requireInvalid))
 	}
 
 	var issues []string
 	issues = append(issues, validateInboundOCPIRequest(*event, true)...)
-	issues = append(issues, validateTokenPayload(*event, requireInvalid)...)
+	issues = append(issues, validateTokenPayload(*event, requireInvalid, action.Output)...)
 	issues = append(issues, validateOCPIEnvelopeResponse(*event, true)...)
 
 	if requireKnownToken {
@@ -550,6 +551,7 @@ func evalOutboundAuthorize(rt *sessionRuntime, actionID string, expectAllowed bo
 	var issues []string
 	issues = append(issues, validateRequestAuth(*event)...)
 	issues = append(issues, validateJSONContentType(*event)...)
+	issues = append(issues, validateAuthorizeRequest(*event, action.Output)...)
 	issues = append(issues, validateResponseTime(*event, 2000)...)
 	issues = append(issues, validateAuthorizationEnvelope(*event, expectAllowed)...)
 	if len(issues) > 0 {
@@ -976,6 +978,25 @@ func validateAuthorizationEnvelope(event TrafficEvent, expectAllowed bool) []str
 	return issues
 }
 
+func validateAuthorizeRequest(event TrafficEvent, expected map[string]string) []string {
+	if len(expected) == 0 {
+		return nil
+	}
+	var issues []string
+	if expectedUID := strings.TrimSpace(expected["uid"]); expectedUID != "" && !strings.Contains(event.Path, "/"+expectedUID+"/authorize") {
+		issues = append(issues, fmt.Sprintf("Expected the authorization request to target token UID %s, got %s.", expectedUID, event.Path))
+	}
+	if expectedLocationID := strings.TrimSpace(expected["location_id"]); expectedLocationID != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(event.RequestBody), &payload); err != nil {
+			issues = append(issues, "The authorization request body was not valid JSON.")
+		} else if got := strings.TrimSpace(stringValue(payload["location_id"])); got != expectedLocationID {
+			issues = append(issues, fmt.Sprintf("Expected authorization location_id %s, got %s.", expectedLocationID, got))
+		}
+	}
+	return issues
+}
+
 func validateCommandPayload(event TrafficEvent, command string, seed *fakegen.SeedData) []string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(event.RequestBody), &payload); err != nil {
@@ -1003,6 +1024,43 @@ func validateCommandPayload(event TrafficEvent, command string, seed *fakegen.Se
 	return issues
 }
 
+func validateStartSessionExpectations(event TrafficEvent, expected map[string]string) []string {
+	if len(expected) == 0 {
+		return nil
+	}
+
+	var payload struct {
+		LocationID  string `json:"location_id"`
+		EvseUID     string `json:"evse_uid"`
+		ConnectorID string `json:"connector_id"`
+		Token       struct {
+			UID  string `json:"uid"`
+			Type string `json:"type"`
+		} `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(event.RequestBody), &payload); err != nil {
+		return []string{"The START_SESSION payload was not valid JSON."}
+	}
+
+	var issues []string
+	if expectedLocationID := strings.TrimSpace(expected["location_id"]); expectedLocationID != "" && strings.TrimSpace(payload.LocationID) != expectedLocationID {
+		issues = append(issues, fmt.Sprintf("Expected START_SESSION location_id %s, got %s.", expectedLocationID, payload.LocationID))
+	}
+	if expectedEVSEUID := strings.TrimSpace(expected["evse_uid"]); expectedEVSEUID != "" && strings.TrimSpace(payload.EvseUID) != "" && strings.TrimSpace(payload.EvseUID) != expectedEVSEUID {
+		issues = append(issues, fmt.Sprintf("Expected START_SESSION evse_uid %s when provided, got %s.", expectedEVSEUID, payload.EvseUID))
+	}
+	if expectedConnectorID := strings.TrimSpace(expected["connector_id"]); expectedConnectorID != "" && strings.TrimSpace(payload.ConnectorID) != "" && strings.TrimSpace(payload.ConnectorID) != expectedConnectorID {
+		issues = append(issues, fmt.Sprintf("Expected START_SESSION connector_id %s when provided, got %s.", expectedConnectorID, payload.ConnectorID))
+	}
+	if expectedTokenUID := strings.TrimSpace(expected["token_uid"]); expectedTokenUID != "" && strings.TrimSpace(payload.Token.UID) != expectedTokenUID {
+		issues = append(issues, fmt.Sprintf("Expected START_SESSION token.uid %s, got %s.", expectedTokenUID, payload.Token.UID))
+	}
+	if expectedTokenType := strings.TrimSpace(expected["token_type"]); expectedTokenType != "" && strings.TrimSpace(payload.Token.Type) != "" && strings.TrimSpace(payload.Token.Type) != expectedTokenType {
+		issues = append(issues, fmt.Sprintf("Expected START_SESSION token.type %s when provided, got %s.", expectedTokenType, payload.Token.Type))
+	}
+	return issues
+}
+
 func validateLocationPatchPayload(event TrafficEvent) []string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(event.RequestBody), &payload); err != nil {
@@ -1020,7 +1078,7 @@ func validateLocationPatchPayload(event TrafficEvent) []string {
 	return issues
 }
 
-func validateTokenPayload(event TrafficEvent, requireInvalid bool) []string {
+func validateTokenPayload(event TrafficEvent, requireInvalid bool, expected map[string]string) []string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(event.RequestBody), &payload); err != nil {
 		return []string{"The Token body was not valid JSON."}
@@ -1059,6 +1117,27 @@ func validateTokenPayload(event TrafficEvent, requireInvalid bool) []string {
 	query, _ := url.ParseQuery(event.RawQuery)
 	if queryType := query.Get("type"); queryType != "" && queryType != stringValue(payload["type"]) {
 		issues = append(issues, "The Token type query parameter did not match the body.")
+	}
+	for field, label := range map[string]string{
+		"uid":         "uid",
+		"type":        "type",
+		"contract_id": "contract_id",
+		"issuer":      "issuer",
+		"whitelist":   "whitelist",
+	} {
+		expectedValue := strings.TrimSpace(expected[field])
+		if expectedValue == "" {
+			continue
+		}
+		if actualValue := strings.TrimSpace(stringValue(payload[field])); actualValue != expectedValue {
+			issues = append(issues, fmt.Sprintf("Expected Token %s %s, got %s.", label, expectedValue, actualValue))
+		}
+	}
+	if expectedValid := strings.TrimSpace(expected["valid"]); expectedValid != "" {
+		actualValid, ok := payload["valid"].(bool)
+		if !ok || boolString(actualValid) != strings.ToLower(expectedValid) {
+			issues = append(issues, fmt.Sprintf("Expected Token valid=%s.", strings.ToLower(expectedValid)))
+		}
 	}
 	return issues
 }
@@ -1387,6 +1466,56 @@ func manualOrPassed(checkpoint *CheckpointState, intro string, events ...Traffic
 		Messages:         []string{intro, "Manual checkpoint answer recorded: " + checkpoint.Answer},
 		EvidenceEventIDs: collectEventIDs(events),
 	}
+}
+
+func tokenPushPendingMessage(expected map[string]string, requireInvalid bool) string {
+	message := "Waiting for the peer to push a Token object."
+	var details []string
+	for _, key := range []string{"uid", "type", "contract_id", "issuer", "whitelist"} {
+		if value := strings.TrimSpace(expected[key]); value != "" {
+			details = append(details, key+"="+value)
+		}
+	}
+	if value := strings.TrimSpace(expected["valid"]); value != "" {
+		details = append(details, "valid="+strings.ToLower(value))
+	} else if requireInvalid {
+		details = append(details, "valid=false")
+	}
+	if len(details) == 0 {
+		return message
+	}
+	return message + " Expected profile: " + strings.Join(details, ", ") + "."
+}
+
+func remoteStartPendingMessage(expected map[string]string) string {
+	message := "Waiting for the peer to send START_SESSION."
+	locationID := strings.TrimSpace(expected["location_id"])
+	if locationID == "" {
+		return message
+	}
+	var details []string
+	details = append(details, "location_id="+locationID)
+	if evseUID := strings.TrimSpace(expected["evse_uid"]); evseUID != "" {
+		details = append(details, "evse_uid="+evseUID)
+	}
+	if connectorID := strings.TrimSpace(expected["connector_id"]); connectorID != "" {
+		details = append(details, "connector_id="+connectorID)
+	}
+	if tokenUID := strings.TrimSpace(expected["token_uid"]); tokenUID != "" {
+		tokenDetail := "token.uid=" + tokenUID
+		if tokenType := strings.TrimSpace(expected["token_type"]); tokenType != "" {
+			tokenDetail += " (" + tokenType + ")"
+		}
+		details = append(details, tokenDetail)
+	}
+	return message + " Use the prepared happy-path target: " + strings.Join(details, ", ") + "."
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func passedEval(message string, events ...TrafficEvent) CaseEvaluation {

@@ -508,7 +508,10 @@ func (m *Manager) rebuildSessionLocked(rt *sessionRuntime) {
 func (m *Manager) blockingRequirement(rt *sessionRuntime, def CaseDefinition) string {
 	for _, dep := range def.Requires {
 		result := rt.cases[dep]
-		if result == nil || result.Status != "passed" {
+		if result == nil {
+			return dep
+		}
+		if dependencyBlocksProgress(result.Status) {
 			if result != nil && result.Title != "" {
 				return result.Title
 			}
@@ -516,6 +519,17 @@ func (m *Manager) blockingRequirement(rt *sessionRuntime, def CaseDefinition) st
 		}
 	}
 	return ""
+}
+
+func dependencyBlocksProgress(status string) bool {
+	switch status {
+	case "pending", "manual", "blocked":
+		return true
+	default:
+		// Failed cases stay visible in the results summary, but they should not
+		// freeze the rest of the suite when later checks can still run.
+		return false
+	}
 }
 
 func (m *Manager) resetCheckpointsForActionLocked(rt *sessionRuntime, actionID string) {
@@ -563,11 +577,7 @@ func nextStep(suite SuiteDefinition, session TestSession) SessionStep {
 				}
 			}
 		case "failed":
-			return SessionStep{
-				Title:       result.Title,
-				Description: firstMessage(result.Messages),
-				CaseID:      result.ID,
-			}
+			continue
 		case "blocked":
 			if blockedStep == nil {
 				step := SessionStep{

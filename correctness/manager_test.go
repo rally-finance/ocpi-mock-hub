@@ -418,6 +418,86 @@ func TestNextStepSkipsBlockedCaseActions(t *testing.T) {
 	}
 }
 
+func TestNextStepSkipsFailedCasesAndMovesToNextAction(t *testing.T) {
+	suite := SuiteDefinition{
+		Cases: []CaseDefinition{
+			{
+				ID:        "failed_case",
+				Title:     "Failed Case",
+				ActionIDs: []string{"failed_action"},
+			},
+			{
+				ID:        "ready_case",
+				Title:     "Ready Case",
+				ActionIDs: []string{"ready_action"},
+			},
+		},
+	}
+	session := TestSession{
+		Actions: []ActionState{
+			{
+				ID:          "failed_action",
+				Title:       "Failed Action",
+				Description: "Already evaluated and failed.",
+				Status:      "completed",
+			},
+			{
+				ID:          "ready_action",
+				Title:       "Ready Action",
+				Description: "This should still be runnable.",
+				Status:      "idle",
+			},
+		},
+		Cases: []CaseResult{
+			{
+				ID:       "failed_case",
+				Title:    "Failed Case",
+				Status:   "failed",
+				Messages: []string{"The previous check failed, but this should not block the suite."},
+			},
+			{
+				ID:     "ready_case",
+				Title:  "Ready Case",
+				Status: "pending",
+			},
+		},
+	}
+
+	step := nextStep(suite, session)
+	if step.ActionID != "ready_action" {
+		t.Fatalf("expected ready_action to be suggested after a failed case, got %#v", step)
+	}
+}
+
+func TestBlockingRequirementIgnoresFailedDependency(t *testing.T) {
+	manager := NewManager(testSeed())
+	rt := &sessionRuntime{
+		suite: SuiteDefinition{
+			Cases: []CaseDefinition{
+				{ID: "handshake_flow", Title: "Handshake Flow"},
+				{ID: "pull_locations_full", Title: "Full Locations Pull", Requires: []string{"handshake_flow"}},
+			},
+		},
+		cases: map[string]*CaseResult{
+			"handshake_flow": {
+				ID:     "handshake_flow",
+				Title:  "Handshake Flow",
+				Status: "failed",
+			},
+			"pull_locations_full": {
+				ID:     "pull_locations_full",
+				Title:  "Full Locations Pull",
+				Status: "pending",
+			},
+		},
+	}
+
+	blockedBy := manager.blockingRequirement(rt, rt.suite.Cases[1])
+	if blockedBy != "" {
+		t.Fatalf("expected failed dependency not to block follow-up cases, got %q", blockedBy)
+	}
+}
+
 func TestNextStepFallsBackToBlockedMessageWhenNothingElseIsActionable(t *testing.T) {
 	suite := SuiteDefinition{
 		Cases: []CaseDefinition{

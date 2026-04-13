@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
@@ -53,8 +55,9 @@ func (h *Handler) GetVersionDetails(w http.ResponseWriter, r *http.Request) {
 
 // verifyTokenA checks the Authorization header against Token A.
 // Returns true if valid, writes an error response and returns false otherwise.
-// Also accepts Token B from the active local session or from persisted party
-// state so follow-up discovery requests can succeed immediately.
+// Also accepts Token B from the active local session or from persisted
+// correctness-session party state so follow-up discovery requests can succeed
+// immediately across instances.
 func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 	authHeader := r.Header.Get("Authorization")
 	if len(ocpiutil.AuthTokenCandidates(authHeader)) == 0 {
@@ -74,7 +77,7 @@ func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 	if h != nil && h.Store != nil {
 		for _, candidate := range ocpiutil.AuthTokenCandidates(authHeader) {
 			party, _ := h.Store.GetPartyByTokenB(candidate)
-			if party != nil {
+			if isCorrectnessSessionParty(party) {
 				return true
 			}
 		}
@@ -82,6 +85,21 @@ func (h *Handler) verifyTokenA(w http.ResponseWriter, r *http.Request) bool {
 
 	ocpiutil.Error(w, r, http.StatusUnauthorized, ocpiutil.StatusUnauthorized, "Invalid authorization token")
 	return false
+}
+
+func isCorrectnessSessionParty(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+
+	var party struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(raw, &party); err != nil {
+		return false
+	}
+
+	return strings.HasPrefix(strings.TrimSpace(party.Key), "correctness/")
 }
 
 func resolveScheme(r *http.Request) string {

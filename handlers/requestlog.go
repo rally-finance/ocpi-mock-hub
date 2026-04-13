@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -207,34 +206,23 @@ func (rl *RequestLog) Entries() []RequestLogEntry {
 		return nil
 	}
 
-	slots := make([]requestLogSlot, 0, maxLogEntries)
-	for i := 0; i < maxLogEntries; i++ {
-		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(i))
+	if state.Count <= 0 {
+		return nil
+	}
+
+	entries := make([]RequestLogEntry, 0, state.Count)
+	for i := 0; i < state.Count; i++ {
+		index := (state.NextIndex - 1 - i + maxLogEntries) % maxLogEntries
+		expectedSequence := state.LastSequence - int64(i)
+		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(index))
 		if err != nil {
 			continue
 		}
 		slot, err := decodeRequestLogSlot(slotRaw)
-		if err != nil {
+		if err != nil || slot.Sequence != expectedSequence {
 			continue
 		}
-		if slot.Sequence <= 0 {
-			continue
-		}
-		slots = append(slots, slot)
-	}
-
-	sort.Slice(slots, func(i, j int) bool {
-		return slots[i].Sequence > slots[j].Sequence
-	})
-
-	limit := state.Count
-	if limit > len(slots) {
-		limit = len(slots)
-	}
-
-	entries := make([]RequestLogEntry, 0, limit)
-	for i := 0; i < limit; i++ {
-		entries = append(entries, slots[i].Entry)
+		entries = append(entries, slot.Entry)
 	}
 
 	return entries

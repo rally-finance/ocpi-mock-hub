@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -81,6 +82,39 @@ func TestRequestLogFailedSlotWriteDoesNotAdvanceVisibleHistory(t *testing.T) {
 	}
 }
 
+func TestRequestLogEntriesReadsOnlyPopulatedSlots(t *testing.T) {
+	store := &countingRequestLogStore{base: newRequestLogMemoryStore()}
+	log := NewRequestLog(store)
+
+	for i := 0; i < 3; i++ {
+		log.Add(RequestLogEntry{
+			Timestamp:  "2026-01-01T00:00:00Z",
+			Method:     "GET",
+			Path:       fmt.Sprintf("/ocpi/%d", i),
+			Status:     200,
+			DurationMS: int64(i),
+		})
+	}
+
+	store.resetCounts()
+	entries := log.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	if got := store.getCount(requestLogMetaBlobKey); got != 1 {
+		t.Fatalf("expected exactly 1 metadata read, got %d", got)
+	}
+
+	var slotReads int
+	for i := 0; i < maxLogEntries; i++ {
+		slotReads += store.getCount(requestLogEntryBlobKey(i))
+	}
+	if slotReads != 3 {
+		t.Fatalf("expected exactly 3 slot reads for populated entries, got %d", slotReads)
+	}
+}
+
 type failingRequestLogStore struct {
 	base            *requestLogMemoryStore
 	failEntryWrites bool
@@ -95,4 +129,37 @@ func (s *failingRequestLogStore) UpdateBlob(key string, fn func([]byte) ([]byte,
 		return errors.New("simulated entry write failure")
 	}
 	return s.base.UpdateBlob(key, fn)
+}
+
+type countingRequestLogStore struct {
+	base *requestLogMemoryStore
+
+	mu        sync.Mutex
+	getCounts map[string]int
+}
+
+func (s *countingRequestLogStore) GetBlob(key string) ([]byte, error) {
+	s.mu.Lock()
+	if s.getCounts == nil {
+		s.getCounts = make(map[string]int)
+	}
+	s.getCounts[key]++
+	s.mu.Unlock()
+	return s.base.GetBlob(key)
+}
+
+func (s *countingRequestLogStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	return s.base.UpdateBlob(key, fn)
+}
+
+func (s *countingRequestLogStore) resetCounts() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getCounts = make(map[string]int)
+}
+
+func (s *countingRequestLogStore) getCount(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getCounts[key]
 }

@@ -9,43 +9,60 @@ import (
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
+type inboundCaptureDecision struct {
+	matches bool
+	capture bool
+}
+
 func (m *Manager) MatchesInboundRequest(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	rt := m.sessions[m.activeID]
-	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
 		return false
 	}
 
-	if len(ocpiutil.AuthTokenCandidates(r.Header.Get("Authorization"))) == 0 {
-		return false
-	}
-
-	return inboundRequestMatchesSession(rt, r.Header.Get("Authorization"), r.Header.Get("OCPI-From-Country-Code"), r.Header.Get("OCPI-From-Party-Id"))
+	return m.inboundCaptureDecisionLocked(r).matches
 }
 
 func (m *Manager) ShouldCaptureInboundRequest(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	if m.MatchesInboundRequest(r) {
-		return true
-	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	rt := m.sessions[m.activeID]
-	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
 		return false
 	}
 
-	return inboundHandshakeDiscoveryCandidate(rt, r)
+	return m.inboundCaptureDecisionLocked(r).capture
+}
+
+func (m *Manager) inboundCaptureDecisionLocked(r *http.Request) inboundCaptureDecision {
+	if r == nil {
+		return inboundCaptureDecision{}
+	}
+
+	rt := m.sessions[m.activeID]
+	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {
+		return inboundCaptureDecision{}
+	}
+
+	if len(ocpiutil.AuthTokenCandidates(r.Header.Get("Authorization"))) == 0 {
+		return inboundCaptureDecision{}
+	}
+
+	if inboundRequestMatchesSession(rt, r.Header.Get("Authorization"), r.Header.Get("OCPI-From-Country-Code"), r.Header.Get("OCPI-From-Party-Id")) {
+		return inboundCaptureDecision{matches: true, capture: true}
+	}
+
+	return inboundCaptureDecision{
+		capture: inboundHandshakeDiscoveryCandidate(rt, r),
+	}
 }
 
 func (m *Manager) ShouldCaptureOutboundRequest(req *http.Request) bool {
@@ -53,8 +70,11 @@ func (m *Manager) ShouldCaptureOutboundRequest(req *http.Request) bool {
 		return false
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.loadStateLocked(); err != nil {
+		return false
+	}
 
 	rt := m.sessions[m.activeID]
 	if rt == nil || rt.sandbox == nil || rt.sandbox.Store == nil {

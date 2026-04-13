@@ -11,6 +11,14 @@ func NewCorrectnessStore(base Store, manager *correctness.Manager) *CorrectnessS
 	return &CorrectnessStore{base: base, correctness: manager}
 }
 
+func (s *CorrectnessStore) GetBlob(key string) ([]byte, error) {
+	return s.base.GetBlob(key)
+}
+
+func (s *CorrectnessStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	return s.base.UpdateBlob(key, fn)
+}
+
 func (s *CorrectnessStore) overlay() *correctness.OverlayStore {
 	if s == nil || s.correctness == nil {
 		return nil

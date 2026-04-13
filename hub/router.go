@@ -18,7 +18,7 @@ func NewRouter(app *App) http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	reqLog := handlers.NewRequestLog()
+	reqLog := handlers.NewRequestLog(app.Store)
 	r.Use(handlers.RequestLogMiddleware(reqLog))
 	r.Use(correctness.Middleware(app.Correctness))
 	r.Use(ocpiFromHeadersMiddleware(app.Config.HubCountry, app.Config.HubParty))

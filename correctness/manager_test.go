@@ -67,6 +67,31 @@ func testSeed() *fakegen.SeedData {
 	}
 }
 
+func loadRuntime(t *testing.T, manager *Manager, sessionID string) *sessionRuntime {
+	t.Helper()
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if err := manager.loadStateLocked(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	rt := manager.sessions[sessionID]
+	if rt == nil {
+		t.Fatalf("session %q not found", sessionID)
+	}
+	return rt
+}
+
+func mutateManagerState(t *testing.T, manager *Manager, fn func() error) {
+	t.Helper()
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if err := manager.withStateMutationLocked(fn); err != nil {
+		t.Fatalf("mutate manager state: %v", err)
+	}
+}
+
 func TestManagerStartSessionDefaultsToCorrectnessSuite(t *testing.T) {
 	manager := NewManager(testSeed())
 
@@ -186,7 +211,7 @@ func TestManagerRerunCreatesFreshSandbox(t *testing.T) {
 		t.Fatalf("start session: %v", err)
 	}
 
-	originalAddress := manager.sessions[session.ID].sandbox.Seed.Locations[0].Address
+	originalAddress := loadRuntime(t, manager, session.ID).sandbox.Seed.Locations[0].Address
 	err = manager.UpdateSandbox(session.ID, func(sandbox *Sandbox) error {
 		sandbox.Seed.Locations[0].Address = "Changed In Session"
 		return nil
@@ -194,11 +219,14 @@ func TestManagerRerunCreatesFreshSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update sandbox: %v", err)
 	}
-	if got := manager.sessions[session.ID].sandbox.Seed.Locations[0].Address; got != "Changed In Session" {
+	if got := loadRuntime(t, manager, session.ID).sandbox.Seed.Locations[0].Address; got != "Changed In Session" {
 		t.Fatalf("expected mutated address, got %q", got)
 	}
 
-	manager.activeID = ""
+	mutateManagerState(t, manager, func() error {
+		manager.activeID = ""
+		return nil
+	})
 	rerun, err := manager.RerunSession(session.ID)
 	if err != nil {
 		t.Fatalf("rerun session: %v", err)
@@ -207,7 +235,7 @@ func TestManagerRerunCreatesFreshSandbox(t *testing.T) {
 		t.Fatal("expected rerun to create a fresh session ID")
 	}
 
-	if got := manager.sessions[rerun.ID].sandbox.Seed.Locations[0].Address; got != originalAddress {
+	if got := loadRuntime(t, manager, rerun.ID).sandbox.Seed.Locations[0].Address; got != originalAddress {
 		t.Fatalf("expected rerun sandbox address %q, got %q", originalAddress, got)
 	}
 }
@@ -241,39 +269,48 @@ func TestMarkActionStartedReactivatesCompletedActionRerunAndResetsCheckpoints(t 
 		t.Fatalf("start session: %v", err)
 	}
 
-	rt := manager.sessions[session.ID]
-	action := rt.actions["prepare_pull_locations_full_delete_connector"]
-	if action == nil {
-		t.Fatal("expected prepare_pull_locations_full_delete_connector action")
-	}
-	action.Status = "completed"
-	action.Output = map[string]string{
-		"location_id":  "LOC-1",
-		"evse_uid":     "EVSE-1",
-		"connector_id": "C1",
-	}
+	mutateManagerState(t, manager, func() error {
+		rt := manager.sessions[session.ID]
+		if rt == nil {
+			return ErrSessionNotFound
+		}
+		action := rt.actions["prepare_pull_locations_full_delete_connector"]
+		if action == nil {
+			t.Fatal("expected prepare_pull_locations_full_delete_connector action")
+		}
+		action.Status = "completed"
+		action.Output = map[string]string{
+			"location_id":  "LOC-1",
+			"evse_uid":     "EVSE-1",
+			"connector_id": "C1",
+		}
 
-	result := rt.cases["pull_locations_full_delete_connector"]
-	if result == nil || len(result.Checkpoints) == 0 {
-		t.Fatal("expected pull_locations_full_delete_connector checkpoint state")
-	}
-	result.Checkpoints[0].Answer = "still present"
-	result.Checkpoints[0].Notes = "before retry"
-	result.Checkpoints[0].Status = "answered"
+		result := rt.cases["pull_locations_full_delete_connector"]
+		if result == nil || len(result.Checkpoints) == 0 {
+			t.Fatal("expected pull_locations_full_delete_connector checkpoint state")
+		}
+		result.Checkpoints[0].Answer = "still present"
+		result.Checkpoints[0].Notes = "before retry"
+		result.Checkpoints[0].Status = "answered"
 
-	manager.activeID = ""
-	rt.session.Status = "completed"
-	rt.session.CurrentStep = SessionStep{
-		Title:       "Session Complete",
-		Description: "All currently included OCPI correctness checks reached a terminal state.",
-	}
+		manager.activeID = ""
+		rt.session.Status = "completed"
+		rt.session.CurrentStep = SessionStep{
+			Title:       "Session Complete",
+			Description: "All currently included OCPI correctness checks reached a terminal state.",
+		}
+		return nil
+	})
 
 	if err := manager.MarkActionStarted(session.ID, "prepare_pull_locations_full_delete_connector"); err != nil {
 		t.Fatalf("rerun action start: %v", err)
 	}
 
-	if manager.activeID != session.ID {
-		t.Fatalf("expected rerun to reactivate session %q, got %q", session.ID, manager.activeID)
+	rt := loadRuntime(t, manager, session.ID)
+	action := rt.actions["prepare_pull_locations_full_delete_connector"]
+	result := rt.cases["pull_locations_full_delete_connector"]
+	if manager.ActiveSessionID() != session.ID {
+		t.Fatalf("expected rerun to reactivate session %q, got %q", session.ID, manager.ActiveSessionID())
 	}
 	if action.Status != "running" {
 		t.Fatalf("expected action status running, got %q", action.Status)
@@ -286,6 +323,47 @@ func TestMarkActionStartedReactivatesCompletedActionRerunAndResetsCheckpoints(t 
 	}
 	if result.Checkpoints[0].Status != "pending" {
 		t.Fatalf("expected checkpoint status pending after rerun, got %#v", result.Checkpoints[0])
+	}
+}
+
+func TestManagerPersistsAcrossInstances(t *testing.T) {
+	store := newMemoryStateStore()
+	managerA := NewManager(testSeed(), store)
+
+	session, err := managerA.StartSession(SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	if err := managerA.UpdateSandbox(session.ID, func(sandbox *Sandbox) error {
+		sandbox.Seed.Locations[0].Address = "Shared State Avenue 1"
+		return nil
+	}); err != nil {
+		t.Fatalf("update sandbox: %v", err)
+	}
+	managerA.RecordTrafficEvent(TrafficEvent{
+		Direction:      "inbound",
+		Method:         "GET",
+		Path:           "/ocpi/versions",
+		RequestHeaders: map[string]string{"authorization": "Token peer-token"},
+		StartedAt:      "2026-01-01T00:00:00Z",
+	})
+
+	managerB := NewManager(testSeed(), store)
+	got, err := managerB.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("get session from second manager: %v", err)
+	}
+	if got.EventCount != 1 {
+		t.Fatalf("expected second manager to see 1 event, got %d", got.EventCount)
+	}
+	if got.CurrentStep.ActionID != "run_handshake" {
+		t.Fatalf("expected second manager to keep current step, got %#v", got.CurrentStep)
+	}
+	if current := managerB.CurrentSeed(testSeed()).Locations[0].Address; current != "Shared State Avenue 1" {
+		t.Fatalf("expected second manager to see persisted seed mutation, got %q", current)
 	}
 }
 

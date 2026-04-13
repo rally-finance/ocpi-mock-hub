@@ -1,18 +1,68 @@
 package handlers
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const maxLogEntries = 500
+const (
+	maxLogEntries         = 500
+	requestLogMetaBlobKey = "request-log:meta"
+	requestLogEntryPrefix = "request-log:entry:"
+)
 
 var ignoredPaths = map[string]bool{
 	"/":            true,
 	"/favicon.ico": true,
 	"/robots.txt":  true,
+}
+
+type RequestLogStateStore interface {
+	GetBlob(key string) ([]byte, error)
+	UpdateBlob(key string, fn func([]byte) ([]byte, error)) error
+}
+
+type requestLogMemoryStore struct {
+	mu    sync.Mutex
+	blobs map[string][]byte
+}
+
+func newRequestLogMemoryStore() *requestLogMemoryStore {
+	return &requestLogMemoryStore{
+		blobs: make(map[string][]byte),
+	}
+}
+
+func (m *requestLogMemoryStore) GetBlob(key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	val := m.blobs[key]
+	if val == nil {
+		return nil, nil
+	}
+	return append([]byte(nil), val...), nil
+}
+
+func (m *requestLogMemoryStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current := append([]byte(nil), m.blobs[key]...)
+	next, err := fn(current)
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		delete(m.blobs, key)
+		return nil
+	}
+	m.blobs[key] = append([]byte(nil), next...)
+	return nil
 }
 
 type RequestLogEntry struct {
@@ -25,48 +75,157 @@ type RequestLogEntry struct {
 	OCPITo     string `json:"ocpi_to,omitempty"`
 }
 
-type RequestLog struct {
-	mu      sync.RWMutex
-	entries []RequestLogEntry
-	pos     int
-	full    bool
+type requestLogState struct {
+	LastSequence int64 `json:"last_sequence"`
+	NextIndex    int   `json:"next_index"`
+	Count        int   `json:"count"`
 }
 
-func NewRequestLog() *RequestLog {
-	return &RequestLog{
-		entries: make([]RequestLogEntry, maxLogEntries),
+type requestLogSlot struct {
+	Sequence int64           `json:"sequence"`
+	Entry    RequestLogEntry `json:"entry"`
+}
+
+type RequestLog struct {
+	stateStore RequestLogStateStore
+}
+
+func NewRequestLog(stores ...RequestLogStateStore) *RequestLog {
+	var stateStore RequestLogStateStore
+	if len(stores) > 0 && stores[0] != nil {
+		stateStore = stores[0]
+	} else {
+		stateStore = newRequestLogMemoryStore()
 	}
+	return &RequestLog{stateStore: stateStore}
+}
+
+func decodeRequestLogState(raw []byte) (requestLogState, error) {
+	if len(raw) == 0 {
+		return requestLogState{}, nil
+	}
+	var state requestLogState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return requestLogState{}, err
+	}
+	return state, nil
+}
+
+func decodeRequestLogSlot(raw []byte) (requestLogSlot, error) {
+	if len(raw) == 0 {
+		return requestLogSlot{}, nil
+	}
+	var slot requestLogSlot
+	if err := json.Unmarshal(raw, &slot); err != nil {
+		return requestLogSlot{}, err
+	}
+	return slot, nil
+}
+
+func requestLogEntryBlobKey(index int) string {
+	return requestLogEntryPrefix + strconv.Itoa(index)
 }
 
 func (rl *RequestLog) Add(entry RequestLogEntry) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	rl.entries[rl.pos] = entry
-	rl.pos = (rl.pos + 1) % maxLogEntries
-	if rl.pos == 0 {
-		rl.full = true
+	if rl == nil || rl.stateStore == nil {
+		return
+	}
+
+	var writeIndex int
+	var sequence int64
+	var previousCount int
+	if err := rl.stateStore.UpdateBlob(requestLogMetaBlobKey, func(raw []byte) ([]byte, error) {
+		state, err := decodeRequestLogState(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		writeIndex = state.NextIndex
+		previousCount = state.Count
+		state.LastSequence++
+		sequence = state.LastSequence
+		state.NextIndex = (state.NextIndex + 1) % maxLogEntries
+		if state.Count < maxLogEntries {
+			state.Count++
+		}
+		return json.Marshal(state)
+	}); err != nil {
+		log.Printf("[requestlog] failed to reserve log slot: %v", err)
+		return
+	}
+
+	payload, err := json.Marshal(requestLogSlot{
+		Sequence: sequence,
+		Entry:    entry,
+	})
+	if err != nil {
+		return
+	}
+
+	if err := rl.stateStore.UpdateBlob(requestLogEntryBlobKey(writeIndex), func([]byte) ([]byte, error) {
+		return payload, nil
+	}); err != nil {
+		log.Printf("[requestlog] failed to persist log slot %d sequence %d: %v", writeIndex, sequence, err)
+		rl.rollbackReservedEntry(writeIndex, sequence, previousCount)
+	}
+}
+
+func (rl *RequestLog) rollbackReservedEntry(writeIndex int, sequence int64, previousCount int) {
+	if rl == nil || rl.stateStore == nil {
+		return
+	}
+	expectedNextIndex := (writeIndex + 1) % maxLogEntries
+	if err := rl.stateStore.UpdateBlob(requestLogMetaBlobKey, func(raw []byte) ([]byte, error) {
+		state, err := decodeRequestLogState(raw)
+		if err != nil {
+			return nil, err
+		}
+		if state.LastSequence != sequence || state.NextIndex != expectedNextIndex {
+			return json.Marshal(state)
+		}
+
+		state.LastSequence--
+		state.NextIndex = writeIndex
+		state.Count = previousCount
+		return json.Marshal(state)
+	}); err != nil {
+		log.Printf("[requestlog] failed to roll back log reservation for slot %d sequence %d: %v", writeIndex, sequence, err)
 	}
 }
 
 func (rl *RequestLog) Entries() []RequestLogEntry {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-
-	var result []RequestLogEntry
-	if rl.full {
-		result = make([]RequestLogEntry, maxLogEntries)
-		copy(result, rl.entries[rl.pos:])
-		copy(result[maxLogEntries-rl.pos:], rl.entries[:rl.pos])
-	} else {
-		result = make([]RequestLogEntry, rl.pos)
-		copy(result, rl.entries[:rl.pos])
+	if rl == nil || rl.stateStore == nil {
+		return nil
+	}
+	raw, err := rl.stateStore.GetBlob(requestLogMetaBlobKey)
+	if err != nil {
+		return nil
+	}
+	state, err := decodeRequestLogState(raw)
+	if err != nil {
+		return nil
 	}
 
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
+	if state.Count <= 0 {
+		return nil
 	}
 
-	return result
+	entries := make([]RequestLogEntry, 0, state.Count)
+	for i := 0; i < state.Count; i++ {
+		index := (state.NextIndex - 1 - i + maxLogEntries) % maxLogEntries
+		expectedSequence := state.LastSequence - int64(i)
+		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(index))
+		if err != nil {
+			continue
+		}
+		slot, err := decodeRequestLogSlot(slotRaw)
+		if err != nil || slot.Sequence != expectedSequence {
+			continue
+		}
+		entries = append(entries, slot.Entry)
+	}
+
+	return entries
 }
 
 type statusCapture struct {

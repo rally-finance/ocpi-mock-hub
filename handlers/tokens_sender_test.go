@@ -156,7 +156,18 @@ func (s *testStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
 	}
 	return s.parties[key], nil
 }
-func (s *testStore) DeleteParty(key string) error { delete(s.parties, key); return nil }
+func (s *testStore) DeleteParty(key string) error {
+	if raw, ok := s.parties[key]; ok {
+		var p struct {
+			TokenB string `json:"token_b"`
+		}
+		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
+			delete(s.tokenBIndex, p.TokenB)
+		}
+	}
+	delete(s.parties, key)
+	return nil
+}
 func (s *testStore) ListParties() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.parties))
 	for _, v := range s.parties {

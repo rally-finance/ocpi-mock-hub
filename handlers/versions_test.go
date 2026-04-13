@@ -125,3 +125,69 @@ func TestGetVersionsAcceptsCorrectnessSessionTokenB(t *testing.T) {
 		t.Fatalf("expected correctness session Token B to be accepted, got %d", rr.Code)
 	}
 }
+
+func TestGetVersionsAcceptsPersistedCorrectnessPartyTokenBWithoutCorrectnessOverlay(t *testing.T) {
+	store := newTestStore()
+	payload, err := json.Marshal(map[string]string{
+		"key":     "correctness/CTS-1234",
+		"token_b": "shared-token-b",
+		"role":    "EMSP",
+	})
+	if err != nil {
+		t.Fatalf("marshal shared party payload: %v", err)
+	}
+	if err := store.PutParty("correctness/CTS-1234", payload); err != nil {
+		t.Fatalf("put party: %v", err)
+	}
+
+	h := &Handler{
+		Config: HandlerConfig{
+			TokenA: "global-token-a",
+		},
+		Store: store,
+	}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/versions", nil)
+	req.Host = "inner.example"
+	req.Header.Set("Authorization", "Token shared-token-b")
+
+	rr := httptest.NewRecorder()
+	h.GetVersions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected shared party Token B to be accepted without a correctness overlay, got %d", rr.Code)
+	}
+}
+
+func TestGetVersionsRejectsNonCorrectnessPartyTokenBWithoutOverlay(t *testing.T) {
+	store := newTestStore()
+	payload, err := json.Marshal(map[string]string{
+		"key":     "NL/EMS",
+		"token_b": "shared-token-b",
+		"role":    "EMSP",
+	})
+	if err != nil {
+		t.Fatalf("marshal shared party payload: %v", err)
+	}
+	if err := store.PutParty("NL/EMS", payload); err != nil {
+		t.Fatalf("put party: %v", err)
+	}
+
+	h := &Handler{
+		Config: HandlerConfig{
+			TokenA: "global-token-a",
+		},
+		Store: store,
+	}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/versions", nil)
+	req.Host = "inner.example"
+	req.Header.Set("Authorization", "Token shared-token-b")
+
+	rr := httptest.NewRecorder()
+	h.GetVersions(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected non-correctness party Token B to be rejected without a correctness overlay, got %d", rr.Code)
+	}
+}

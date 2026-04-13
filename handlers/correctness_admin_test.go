@@ -584,6 +584,262 @@ func TestPrepareLocationFullDeleteConnectorCanBeRunAgain(t *testing.T) {
 	}
 }
 
+func TestArmPushTokenCreateReturnsExplicitProfile(t *testing.T) {
+	h := testCorrectnessHandler()
+	createCorrectnessSessionForTest(t, h)
+
+	output, err := h.armTokenCreate()
+	if err != nil {
+		t.Fatalf("arm token create: %v", err)
+	}
+	if output["uid"] == "" || output["contract_id"] == "" {
+		t.Fatalf("expected generated token identifiers, got %#v", output)
+	}
+	if output["type"] != "RFID" {
+		t.Fatalf("expected RFID token type, got %#v", output)
+	}
+	if output["whitelist"] != "ALLOWED" || output["valid"] != "true" {
+		t.Fatalf("expected explicit happy-path token policy, got %#v", output)
+	}
+}
+
+func TestRunRealtimeAuthorizationValidUsesLatestValidToken(t *testing.T) {
+	h := testCorrectnessHandler()
+
+	var requestPath string
+	var requestAuth string
+	var requestBody map[string]string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		requestAuth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status_code": 1000,
+			"timestamp":   "2026-01-01T00:00:00Z",
+			"data": map[string]any{
+				"allowed":                 "ALLOWED",
+				"authorization_reference": "AUTH-1",
+				"token": map[string]any{
+					"uid": "TOK-VALID",
+				},
+			},
+		})
+	}))
+	defer peer.Close()
+
+	session, err := h.Correctness.StartSession(correctness.SessionConfig{
+		PeerVersionsURL: "https://peer.example.com/ocpi/versions",
+		PeerToken:       "peer-token",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	if err := h.Correctness.SetPeerState(session.ID, correctness.SessionPeerState{
+		Endpoints: []correctness.SessionPeerEndpoint{
+			{Identifier: "tokens", Role: "SENDER", URL: peer.URL + "/ocpi/2.2.1/sender/tokens"},
+		},
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+	session, err = h.Correctness.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+
+	validRaw, _ := json.Marshal(map[string]any{
+		"country_code": "NL",
+		"party_id":     "EMS",
+		"uid":          "TOK-VALID",
+		"type":         "RFID",
+		"contract_id":  "CON-1",
+		"issuer":       "Issuer",
+		"whitelist":    "ALLOWED",
+		"valid":        true,
+		"last_updated": "2026-01-01T00:00:00Z",
+	})
+	invalidRaw, _ := json.Marshal(map[string]any{
+		"country_code": "NL",
+		"party_id":     "EMS",
+		"uid":          "TOK-INVALID",
+		"type":         "RFID",
+		"contract_id":  "CON-2",
+		"issuer":       "Issuer",
+		"whitelist":    "ALLOWED",
+		"valid":        false,
+		"last_updated": "2026-01-02T00:00:00Z",
+	})
+	if err := overlay.PutToken("NL", "EMS", "TOK-VALID", validRaw); err != nil {
+		t.Fatalf("put valid token: %v", err)
+	}
+	if err := overlay.PutToken("NL", "EMS", "TOK-INVALID", invalidRaw); err != nil {
+		t.Fatalf("put invalid token: %v", err)
+	}
+
+	output, err := h.runRealtimeAuthorization(session, true)
+	if err != nil {
+		t.Fatalf("run realtime authorization: %v", err)
+	}
+
+	if !strings.Contains(requestPath, "/TOK-VALID/authorize") {
+		t.Fatalf("expected valid authorization to target TOK-VALID, got path %q", requestPath)
+	}
+	if requestAuth != "Token peer-token" {
+		t.Fatalf("expected peer token auth header, got %q", requestAuth)
+	}
+	if requestBody["location_id"] != "LOC-1" {
+		t.Fatalf("expected location LOC-1 in authorization request, got %#v", requestBody)
+	}
+	if output["uid"] != "TOK-VALID" {
+		t.Fatalf("expected output to record TOK-VALID, got %#v", output)
+	}
+}
+
+func TestRunRealtimeAuthorizationInvalidRestoresHappyPathTarget(t *testing.T) {
+	h := testCorrectnessHandler()
+
+	var requestPath string
+	var requestBody map[string]string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status_code": 1000,
+			"timestamp":   "2026-01-01T00:00:00Z",
+			"data": map[string]any{
+				"allowed": "BLOCKED",
+				"token": map[string]any{
+					"uid": "TOK-INVALID",
+				},
+			},
+		})
+	}))
+	defer peer.Close()
+
+	session := createCorrectnessSessionForTest(t, h)
+	if err := h.Correctness.SetPeerState(session.ID, correctness.SessionPeerState{
+		Endpoints: []correctness.SessionPeerEndpoint{
+			{Identifier: "tokens", Role: "SENDER", URL: peer.URL + "/ocpi/2.2.1/sender/tokens"},
+		},
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+	reloaded, err := h.Correctness.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	invalidRaw, _ := json.Marshal(map[string]any{
+		"country_code": "NL",
+		"party_id":     "EMS",
+		"uid":          "TOK-INVALID",
+		"type":         "RFID",
+		"contract_id":  "CON-2",
+		"issuer":       "Issuer",
+		"whitelist":    "ALLOWED",
+		"valid":        false,
+		"last_updated": "2026-01-02T00:00:00Z",
+	})
+	if err := overlay.PutToken("NL", "EMS", "TOK-INVALID", invalidRaw); err != nil {
+		t.Fatalf("put invalid token: %v", err)
+	}
+	if err := h.Correctness.UpdateSandbox(session.ID, func(sandbox *correctness.Sandbox) error {
+		sandbox.Seed.Locations[0].EVSEs[0].Status = "REMOVED"
+		sandbox.Seed.Locations[0].EVSEs[0].Connectors = nil
+		return nil
+	}); err != nil {
+		t.Fatalf("remove happy-path target: %v", err)
+	}
+
+	output, err := h.runRealtimeAuthorization(reloaded, false)
+	if err != nil {
+		t.Fatalf("run realtime authorization: %v", err)
+	}
+
+	if !strings.Contains(requestPath, "/TOK-INVALID/authorize") {
+		t.Fatalf("expected invalid authorization to target TOK-INVALID, got path %q", requestPath)
+	}
+	if requestBody["location_id"] != "LOC-1" {
+		t.Fatalf("expected restored location LOC-1 in authorization request, got %#v", requestBody)
+	}
+	if output["location_id"] != "LOC-1" || output["valid"] != "false" {
+		t.Fatalf("expected output to record restored location and invalid token, got %#v", output)
+	}
+
+	loc := h.currentSeed().LocationByID("LOC-1")
+	if loc == nil {
+		t.Fatal("expected restored location in active seed")
+	}
+	if len(loc.EVSEs) == 0 || strings.EqualFold(loc.EVSEs[0].Status, "REMOVED") {
+		t.Fatalf("expected restored non-removed EVSE, got %#v", loc.EVSEs)
+	}
+}
+
+func TestArmRemoteStartRestoresHappyPathTarget(t *testing.T) {
+	h := testCorrectnessHandler()
+	session := createCorrectnessSessionForTest(t, h)
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	tokenRaw, _ := json.Marshal(map[string]any{
+		"country_code": "NL",
+		"party_id":     "EMS",
+		"uid":          "TOK-1",
+		"type":         "RFID",
+		"contract_id":  "CON-1",
+		"issuer":       "Issuer",
+		"whitelist":    "ALLOWED",
+		"valid":        true,
+		"last_updated": "2026-01-01T00:00:00Z",
+	})
+	if err := overlay.PutToken("NL", "EMS", "TOK-1", tokenRaw); err != nil {
+		t.Fatalf("put token: %v", err)
+	}
+	if err := h.Correctness.UpdateSandbox(session.ID, func(sandbox *correctness.Sandbox) error {
+		sandbox.Seed.Locations[0].EVSEs[0].Status = "REMOVED"
+		sandbox.Seed.Locations[0].EVSEs[0].Connectors = nil
+		return nil
+	}); err != nil {
+		t.Fatalf("remove happy-path target: %v", err)
+	}
+
+	output, err := h.armRemoteStart(session.ID)
+	if err != nil {
+		t.Fatalf("arm remote start: %v", err)
+	}
+	if output["location_id"] != "LOC-1" || output["evse_uid"] != "EVSE-1" || output["connector_id"] != "C1" {
+		t.Fatalf("expected restored happy-path target, got %#v", output)
+	}
+	if output["token_uid"] != "TOK-1" || output["token_type"] != "RFID" {
+		t.Fatalf("expected valid token guidance, got %#v", output)
+	}
+
+	loc := h.currentSeed().LocationByID("LOC-1")
+	if loc == nil {
+		t.Fatal("expected restored location in active seed")
+	}
+	if len(loc.EVSEs) == 0 || strings.EqualFold(loc.EVSEs[0].Status, "REMOVED") {
+		t.Fatalf("expected restored non-removed EVSE, got %#v", loc.EVSEs)
+	}
+	if len(loc.EVSEs[0].Connectors) == 0 {
+		t.Fatalf("expected restored connector, got %#v", loc.EVSEs[0])
+	}
+}
+
 func TestSubmitCorrectnessCheckpointStoresAnswer(t *testing.T) {
 	h := testCorrectnessHandler()
 	session := createCorrectnessSessionForTest(t, h)

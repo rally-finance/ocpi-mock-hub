@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +27,10 @@ func (h *Handler) executeCorrectnessAction(r *http.Request, sessionID, actionID 
 		return h.correctnessRunHandshake(r, session)
 	case "run_unregister":
 		return h.correctnessRunUnregister(session)
-	case "arm_pull_locations_full", "arm_pull_tariffs_full", "arm_push_token_create", "arm_remote_start", "arm_remote_stop":
+	case "arm_pull_locations_full", "arm_pull_tariffs_full", "arm_remote_stop":
 		return map[string]string{}, nil
+	case "arm_push_token_create":
+		return h.armTokenCreate()
 	case "prepare_pull_locations_delta_update":
 		return h.prepareLocationDeltaUpdate(sessionID)
 	case "prepare_pull_locations_full_delete_connector":
@@ -39,9 +42,12 @@ func (h *Handler) executeCorrectnessAction(r *http.Request, sessionID, actionID 
 	case "prepare_pull_tariffs_delta_update":
 		return h.prepareTariffDeltaUpdate(sessionID)
 	case "arm_push_token_update":
-		return h.armKnownToken()
+		return h.armKnownToken(nil)
 	case "arm_push_token_invalidate":
-		return h.armKnownToken()
+		expected := false
+		return h.armKnownToken(&expected)
+	case "arm_remote_start":
+		return h.armRemoteStart(session.ID)
 	case "run_rta_invalid":
 		return h.runRealtimeAuthorization(session, false)
 	case "run_rta_valid":
@@ -368,15 +374,36 @@ func (h *Handler) prepareTariffDeltaUpdate(sessionID string) (map[string]string,
 	return output, err
 }
 
-func (h *Handler) armKnownToken() (map[string]string, error) {
+func (h *Handler) armTokenCreate() (map[string]string, error) {
+	suffix := strings.ToUpper(strings.ReplaceAll(uuid.NewString()[:8], "-", ""))
+	return map[string]string{
+		"uid":         "TOK-" + suffix,
+		"type":        "RFID",
+		"whitelist":   "ALLOWED",
+		"valid":       "true",
+		"contract_id": "CON-" + suffix,
+		"issuer":      "OCPI Mock Hub",
+	}, nil
+}
+
+func (h *Handler) armKnownToken(expectedValid *bool) (map[string]string, error) {
 	token, err := h.latestSandboxToken()
 	if err != nil {
 		return nil, err
+	}
+	valid := token.Valid
+	if expectedValid != nil {
+		valid = *expectedValid
 	}
 	return map[string]string{
 		"uid":          token.UID,
 		"country_code": token.CountryCode,
 		"party_id":     token.PartyID,
+		"type":         token.Type,
+		"contract_id":  token.ContractID,
+		"issuer":       token.Issuer,
+		"whitelist":    token.Whitelist,
+		"valid":        strconv.FormatBool(valid),
 	}, nil
 }
 
@@ -386,16 +413,36 @@ func (h *Handler) runRealtimeAuthorization(session *correctness.TestSession, val
 	if err != nil {
 		return nil, err
 	}
-	token, err := h.latestSandboxToken()
+
+	var token *storedToken
+	if valid {
+		token, err = h.latestSandboxTokenMatching(func(candidate storedToken) bool {
+			return candidate.Valid
+		})
+		if err != nil {
+			return nil, fmt.Errorf("no valid token is available in this session; rerun the token create or update steps first")
+		}
+	} else {
+		token, err = h.latestSandboxTokenMatching(func(candidate storedToken) bool {
+			return !candidate.Valid
+		})
+		if err != nil {
+			token, err = h.latestSandboxToken()
+			if err != nil {
+				return nil, err
+			}
+			tokenCopy := *token
+			tokenCopy.UID = "INVALID-" + uuid.NewString()[:8]
+			tokenCopy.Valid = false
+			token = &tokenCopy
+		}
+	}
+	target, err := h.ensureSessionCommandTarget(session.ID, "no active location is available in the sandbox for authorization")
 	if err != nil {
 		return nil, err
 	}
-	if !valid {
-		token.UID = "INVALID-" + uuid.NewString()[:8]
-	}
-	locationID := firstLocationID(h.currentSeed())
 	url := strings.TrimRight(endpoint, "/") + "/" + token.CountryCode + "/" + token.PartyID + "/" + token.UID + "/authorize"
-	body, _ := json.Marshal(map[string]string{"location_id": locationID})
+	body, _ := json.Marshal(map[string]string{"location_id": target.LocationID})
 	req, err := http.NewRequestWithContext(
 		correctness.WithOutboundMeta(context.Background(), correctness.OutboundMeta{ActionID: map[bool]string{true: "run_rta_valid", false: "run_rta_invalid"}[valid]}),
 		http.MethodPost,
@@ -416,7 +463,35 @@ func (h *Handler) runRealtimeAuthorization(session *correctness.TestSession, val
 		"uid":          token.UID,
 		"country_code": token.CountryCode,
 		"party_id":     token.PartyID,
+		"location_id":  target.LocationID,
+		"valid":        strconv.FormatBool(token.Valid),
 	}, nil
+}
+
+func (h *Handler) armRemoteStart(sessionID string) (map[string]string, error) {
+	token, err := h.latestSandboxTokenMatching(func(candidate storedToken) bool {
+		return candidate.Valid
+	})
+	if err != nil {
+		return nil, fmt.Errorf("no valid token is available in this session; rerun the token create or update steps first")
+	}
+
+	target, err := h.ensureSessionCommandTarget(sessionID, "no non-removed location is available in the sandbox for START_SESSION")
+	if err != nil {
+		return nil, err
+	}
+
+	output := map[string]string{
+		"location_id":  target.LocationID,
+		"evse_uid":     target.EVSEUID,
+		"connector_id": target.ConnectorID,
+		"token_uid":    token.UID,
+		"token_type":   token.Type,
+	}
+	if token.Whitelist != "" {
+		output["token_whitelist"] = token.Whitelist
+	}
+	return output, nil
 }
 
 func (h *Handler) runEVSEStatusPush(session *correctness.TestSession, known bool) (map[string]string, error) {
@@ -659,11 +734,19 @@ type storedToken struct {
 	CountryCode string `json:"country_code"`
 	PartyID     string `json:"party_id"`
 	UID         string `json:"uid"`
+	Type        string `json:"type"`
+	ContractID  string `json:"contract_id"`
+	Issuer      string `json:"issuer"`
+	Whitelist   string `json:"whitelist"`
 	LastUpdated string `json:"last_updated"`
 	Valid       bool   `json:"valid"`
 }
 
 func (h *Handler) latestSandboxToken() (*storedToken, error) {
+	return h.latestSandboxTokenMatching(nil)
+}
+
+func (h *Handler) latestSandboxTokenMatching(match func(storedToken) bool) (*storedToken, error) {
 	raw, err := h.correctnessStore("").ListTokens()
 	if err != nil {
 		return nil, err
@@ -684,7 +767,12 @@ func (h *Handler) latestSandboxToken() (*storedToken, error) {
 	sort.Slice(tokens, func(i, j int) bool {
 		return tokens[i].LastUpdated > tokens[j].LastUpdated
 	})
-	return &tokens[0], nil
+	for i := range tokens {
+		if match == nil || match(tokens[i]) {
+			return &tokens[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no token matched the requested correctness session state")
 }
 
 func currentPeerToken(store Store, fallback string) string {
@@ -694,9 +782,87 @@ func currentPeerToken(store Store, fallback string) string {
 	return fallback
 }
 
-func firstLocationID(seed *fakegen.SeedData) string {
-	if seed == nil || len(seed.Locations) == 0 {
-		return ""
+func (h *Handler) ensureSessionCommandTarget(sessionID, missingMessage string) (commandTarget, error) {
+	var target commandTarget
+	err := h.Correctness.UpdateSandbox(sessionID, func(sandbox *correctness.Sandbox) error {
+		if sandbox == nil || sandbox.Seed == nil {
+			return fmt.Errorf("session sandbox is not available")
+		}
+		if existing, ok := selectCommandTarget(sandbox.Seed); ok {
+			target = existing
+			return nil
+		}
+		restored, ok := h.restoreCommandTarget(sandbox)
+		if !ok {
+			return fmt.Errorf("%s", missingMessage)
+		}
+		target = restored
+		return nil
+	})
+	if err != nil {
+		return commandTarget{}, err
 	}
-	return seed.Locations[0].ID
+	return target, nil
+}
+
+func (h *Handler) restoreCommandTarget(sandbox *correctness.Sandbox) (commandTarget, bool) {
+	if sandbox == nil || sandbox.Seed == nil || h.Seed == nil {
+		return commandTarget{}, false
+	}
+	baseTarget, baseLocation, ok := selectCommandTargetWithLocation(h.Seed)
+	if !ok {
+		return commandTarget{}, false
+	}
+	cloned := correctness.CloneSeed(&fakegen.SeedData{Locations: []fakegen.Location{*baseLocation}})
+	if len(cloned.Locations) == 0 {
+		return commandTarget{}, false
+	}
+	restored := cloned.Locations[0]
+	replaced := false
+	for i := range sandbox.Seed.Locations {
+		if sandbox.Seed.Locations[i].ID == restored.ID {
+			sandbox.Seed.Locations[i] = restored
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		sandbox.Seed.Locations = append(sandbox.Seed.Locations, restored)
+	}
+	return baseTarget, true
+}
+
+type commandTarget struct {
+	LocationID  string
+	EVSEUID     string
+	ConnectorID string
+}
+
+func selectCommandTarget(seed *fakegen.SeedData) (commandTarget, bool) {
+	target, _, ok := selectCommandTargetWithLocation(seed)
+	return target, ok
+}
+
+func selectCommandTargetWithLocation(seed *fakegen.SeedData) (commandTarget, *fakegen.Location, bool) {
+	if seed == nil {
+		return commandTarget{}, nil, false
+	}
+	for i := range seed.Locations {
+		location := &seed.Locations[i]
+		for j := range location.EVSEs {
+			evse := &location.EVSEs[j]
+			if strings.EqualFold(strings.TrimSpace(evse.Status), "REMOVED") {
+				continue
+			}
+			target := commandTarget{
+				LocationID: location.ID,
+				EVSEUID:    evse.UID,
+			}
+			if len(evse.Connectors) > 0 {
+				target.ConnectorID = evse.Connectors[0].ID
+			}
+			return target, location, true
+		}
+	}
+	return commandTarget{}, nil, false
 }

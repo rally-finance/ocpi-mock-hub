@@ -151,3 +151,51 @@ func TestBuiltinSuiteOrdersHandshakeBeforeUnregister(t *testing.T) {
 		t.Fatalf("expected unregister_flow to remain at the end of the flow, got %#v", caseIndex)
 	}
 }
+
+func TestBuiltinSuiteOrdersValidAuthorizationBeforeInvalidationAndRemoteCommandsBeforeLocationRemoval(t *testing.T) {
+	suite := BuiltinSuites()[0]
+
+	actionIndex := make(map[string]int, len(suite.Actions))
+	for i, action := range suite.Actions {
+		actionIndex[action.ID] = i
+	}
+	if actionIndex["run_rta_valid"] >= actionIndex["arm_push_token_invalidate"] {
+		t.Fatalf("expected run_rta_valid before arm_push_token_invalidate, got %#v", actionIndex)
+	}
+	if actionIndex["arm_push_token_invalidate"] >= actionIndex["run_rta_invalid"] {
+		t.Fatalf("expected run_rta_invalid after arm_push_token_invalidate, got %#v", actionIndex)
+	}
+	if actionIndex["run_rta_invalid"] >= actionIndex["prepare_pull_locations_full_delete_connector"] {
+		t.Fatalf("expected run_rta_invalid before destructive location deletion actions, got %#v", actionIndex)
+	}
+
+	caseIndex := make(map[string]int, len(suite.Cases))
+	for i, def := range suite.Cases {
+		caseIndex[def.ID] = i
+	}
+
+	if caseIndex["rta_valid"] >= caseIndex["token_push_invalidate"] {
+		t.Fatalf("expected rta_valid before token_push_invalidate, got %#v", caseIndex)
+	}
+	if caseIndex["token_push_invalidate"] >= caseIndex["rta_invalid"] {
+		t.Fatalf("expected rta_invalid after token_push_invalidate, got %#v", caseIndex)
+	}
+	if caseIndex["rta_invalid"] >= caseIndex["pull_locations_full_delete_connector"] {
+		t.Fatalf("expected rta_invalid before full connector removal checks, got %#v", caseIndex)
+	}
+	if caseIndex["rta_invalid"] >= caseIndex["pull_locations_delta_delete_evse"] {
+		t.Fatalf("expected rta_invalid before EVSE removal checks, got %#v", caseIndex)
+	}
+	if caseIndex["rta_invalid"] >= caseIndex["pull_locations_delta_delete_location"] {
+		t.Fatalf("expected rta_invalid before location removal checks, got %#v", caseIndex)
+	}
+	if caseIndex["remote_start"] >= caseIndex["pull_locations_full_delete_connector"] {
+		t.Fatalf("expected remote_start before destructive location deletion cases, got %#v", caseIndex)
+	}
+	if caseIndex["remote_stop"] >= caseIndex["pull_locations_delta_delete_evse"] {
+		t.Fatalf("expected remote_stop before EVSE removal checks, got %#v", caseIndex)
+	}
+	if caseIndex["remote_stop"] >= caseIndex["pull_locations_delta_delete_location"] {
+		t.Fatalf("expected remote_stop before location removal checks, got %#v", caseIndex)
+	}
+}

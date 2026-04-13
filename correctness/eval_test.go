@@ -96,7 +96,7 @@ func TestValidateTokenPayloadRejectsPathMismatchAndInvalidationErrors(t *testing
 		}`,
 	}
 
-	issues := validateTokenPayload(event, true)
+	issues := validateTokenPayload(event, true, nil)
 	if !containsIssue(issues, "The Token path uid did not match the body.") {
 		t.Fatalf("expected UID mismatch issue, got %#v", issues)
 	}
@@ -105,6 +105,74 @@ func TestValidateTokenPayloadRejectsPathMismatchAndInvalidationErrors(t *testing
 	}
 	if !containsIssue(issues, "The Token last_updated field was not a valid OCPI DateTime.") {
 		t.Fatalf("expected invalid last_updated issue, got %#v", issues)
+	}
+}
+
+func TestValidateTokenPayloadChecksExpectedInstructionFields(t *testing.T) {
+	event := TrafficEvent{
+		Path: "/ocpi/2.2.1/receiver/tokens/NL/EMS/TOK-1",
+		RequestBody: `{
+			"country_code":"NL",
+			"party_id":"EMS",
+			"uid":"TOK-1",
+			"type":"APP_USER",
+			"contract_id":"CON-2",
+			"issuer":"Issuer",
+			"whitelist":"ALWAYS",
+			"valid":false,
+			"last_updated":"2026-01-01T00:00:00Z"
+		}`,
+	}
+
+	issues := validateTokenPayload(event, false, map[string]string{
+		"uid":         "TOK-1",
+		"type":        "RFID",
+		"contract_id": "CON-1",
+		"issuer":      "OCPI Mock Hub",
+		"whitelist":   "ALLOWED",
+		"valid":       "true",
+	})
+	if !containsIssue(issues, "Expected Token type RFID, got APP_USER.") {
+		t.Fatalf("expected type mismatch issue, got %#v", issues)
+	}
+	if !containsIssue(issues, "Expected Token contract_id CON-1, got CON-2.") {
+		t.Fatalf("expected contract mismatch issue, got %#v", issues)
+	}
+	if !containsIssue(issues, "Expected Token issuer OCPI Mock Hub, got Issuer.") {
+		t.Fatalf("expected issuer mismatch issue, got %#v", issues)
+	}
+	if !containsIssue(issues, "Expected Token whitelist ALLOWED, got ALWAYS.") {
+		t.Fatalf("expected whitelist mismatch issue, got %#v", issues)
+	}
+	if !containsIssue(issues, "Expected Token valid=true.") {
+		t.Fatalf("expected valid mismatch issue, got %#v", issues)
+	}
+}
+
+func TestEvalInboundTokenPushPendingIncludesPreparedTokenProfile(t *testing.T) {
+	rt := &sessionRuntime{
+		actions: map[string]*ActionState{
+			"arm_push_token_create": {
+				ID:          "arm_push_token_create",
+				Status:      "completed",
+				EventAnchor: 0,
+				Output: map[string]string{
+					"uid":         "TOK-1",
+					"type":        "RFID",
+					"contract_id": "CON-1",
+					"whitelist":   "ALLOWED",
+					"valid":       "true",
+				},
+			},
+		},
+	}
+
+	eval := evalInboundTokenPush(rt, CaseDefinition{}, "arm_push_token_create", false, false)
+	if eval.Status != "pending" {
+		t.Fatalf("expected pending, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "type=RFID") || !containsIssue(eval.Messages, "whitelist=ALLOWED") || !containsIssue(eval.Messages, "valid=true") {
+		t.Fatalf("expected prepared token profile guidance, got %#v", eval.Messages)
 	}
 }
 
@@ -164,6 +232,11 @@ func TestEvalRemoteStartMatchesCallbackByResponseURL(t *testing.T) {
 				ID:          "arm_remote_start",
 				Status:      "completed",
 				EventAnchor: 0,
+				Output: map[string]string{
+					"location_id": "LOC-1",
+					"token_uid":   "TOK-1",
+					"token_type":  "RFID",
+				},
 			},
 		},
 		events: []TrafficEvent{
@@ -212,6 +285,89 @@ func TestEvalRemoteStartMatchesCallbackByResponseURL(t *testing.T) {
 	eval = evalRemoteStart(rt, CaseDefinition{})
 	if eval.Status != "passed" {
 		t.Fatalf("expected passed after the correct callback URL is observed, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+}
+
+func TestEvalRemoteStartPendingIncludesPreparedLocation(t *testing.T) {
+	rt := &sessionRuntime{
+		sandbox: NewSandbox(testSeed()),
+		actions: map[string]*ActionState{
+			"arm_remote_start": {
+				ID:          "arm_remote_start",
+				Status:      "completed",
+				EventAnchor: 0,
+				Output: map[string]string{
+					"location_id":  "LOC-1",
+					"evse_uid":     "EVSE-1",
+					"connector_id": "C1",
+					"token_uid":    "TOK-1",
+					"token_type":   "RFID",
+				},
+			},
+		},
+	}
+
+	eval := evalRemoteStart(rt, CaseDefinition{})
+	if eval.Status != "pending" {
+		t.Fatalf("expected pending, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "location_id=LOC-1") || !containsIssue(eval.Messages, "token.uid=TOK-1 (RFID)") {
+		t.Fatalf("expected prepared remote-start guidance, got %#v", eval.Messages)
+	}
+}
+
+func TestEvalRemoteStartRequiresPreparedLocationAndToken(t *testing.T) {
+	rt := &sessionRuntime{
+		sandbox: NewSandbox(testSeed()),
+		actions: map[string]*ActionState{
+			"arm_remote_start": {
+				ID:          "arm_remote_start",
+				Status:      "completed",
+				EventAnchor: 0,
+				Output: map[string]string{
+					"location_id": "LOC-2",
+					"token_uid":   "TOK-2",
+					"token_type":  "RFID",
+				},
+			},
+		},
+		events: []TrafficEvent{
+			{
+				Direction: "inbound",
+				Method:    "POST",
+				Path:      "/ocpi/2.2.1/receiver/commands/START_SESSION",
+				RequestHeaders: map[string]string{
+					"authorization":          "Token correctness-token",
+					"x-request-id":           "req-1",
+					"x-correlation-id":       "corr-1",
+					"ocpi-from-country-code": "NL",
+					"ocpi-from-party-id":     "EMS",
+				},
+				RequestBody:    `{"location_id":"LOC-1","response_url":"https://peer.example.com/callback","token":{"uid":"TOK-1","type":"APP_USER"}}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:00Z","data":{"result":"ACCEPTED"}}`,
+			},
+			{
+				Direction:      "outbound",
+				Method:         "POST",
+				URL:            "https://peer.example.com/callback",
+				Path:           "/callback",
+				RequestBody:    `{"result":"ACCEPTED","session_id":"MOCK-1"}`,
+				ResponseStatus: 200,
+				ResponseBody:   `{"status_code":1000,"timestamp":"2026-01-01T00:00:01Z","data":{"status":"ok"}}`,
+			},
+		},
+	}
+
+	eval := evalRemoteStart(rt, CaseDefinition{})
+	if eval.Status != "failed" {
+		t.Fatalf("expected failed due to prepared target mismatch, got %q with messages %#v", eval.Status, eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "Expected START_SESSION location_id LOC-2, got LOC-1.") {
+		t.Fatalf("expected location mismatch issue, got %#v", eval.Messages)
+	}
+	if !containsIssue(eval.Messages, "Expected START_SESSION token.uid TOK-2, got TOK-1.") {
+		t.Fatalf("expected token uid mismatch issue, got %#v", eval.Messages)
 	}
 }
 

@@ -1135,7 +1135,7 @@ func validateTokenPayload(event TrafficEvent, requireInvalid bool, expected map[
 	}
 	if expectedValid := strings.TrimSpace(expected["valid"]); expectedValid != "" {
 		actualValid, ok := payload["valid"].(bool)
-		if !ok || boolString(actualValid) != strings.ToLower(expectedValid) {
+		if !ok || strconv.FormatBool(actualValid) != strings.ToLower(expectedValid) {
 			issues = append(issues, fmt.Sprintf("Expected Token valid=%s.", strings.ToLower(expectedValid)))
 		}
 	}
@@ -1509,13 +1509,6 @@ func remoteStartPendingMessage(expected map[string]string) string {
 		details = append(details, tokenDetail)
 	}
 	return message + " Use the prepared happy-path target: " + strings.Join(details, ", ") + "."
-}
-
-func boolString(value bool) string {
-	if value {
-		return "true"
-	}
-	return "false"
 }
 
 func passedEval(message string, events ...TrafficEvent) CaseEvaluation {

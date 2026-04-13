@@ -83,6 +83,20 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Kind:        "observe",
 			},
 			{
+				ID:          "arm_push_token_invalidate",
+				Group:       "Token Push",
+				Title:       "Wait For Token Invalidation",
+				Description: "Arm the session, then ask the eMSP to invalidate the same Token object by pushing it again with valid set to false.",
+				Kind:        "observe",
+			},
+			{
+				ID:          "run_rta_invalid",
+				Group:       "Real-time Authorization",
+				Title:       "Run Invalid Authorization",
+				Description: "Use the discovered Tokens sender endpoint to send an authorization request for the invalidated token from this session and validate the peer response.",
+				Kind:        "outbound",
+			},
+			{
 				ID:          "prepare_pull_locations_full_delete_connector",
 				Group:       "Locations Pull",
 				Title:       "Prepare Full Connector Deletion",
@@ -102,20 +116,6 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				Title:       "Prepare Delta Location Removal",
 				Description: "Mark one location as removed in the sandbox, then trigger a delta pull and confirm the removal on the eMSP side.",
 				Kind:        "prepare",
-			},
-			{
-				ID:          "arm_push_token_invalidate",
-				Group:       "Token Push",
-				Title:       "Wait For Token Invalidation",
-				Description: "Arm the session, then ask the eMSP to invalidate the same Token object by pushing it again with valid set to false.",
-				Kind:        "observe",
-			},
-			{
-				ID:          "run_rta_invalid",
-				Group:       "Real-time Authorization",
-				Title:       "Run Invalid Authorization",
-				Description: "Use the discovered Tokens sender endpoint to send an authorization request for the invalidated token from this session and validate the peer response.",
-				Kind:        "outbound",
 			},
 			{
 				ID:          "run_evse_status_unknown",
@@ -349,6 +349,38 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				},
 			},
 			{
+				ID:          "token_push_invalidate",
+				Group:       "Token Push",
+				Title:       "Token Push Invalidation",
+				Description: "Validate token invalidation using a Token push with valid set to false.",
+				Evaluator:   "token_push_invalidate",
+				ActionIDs:   []string{"arm_push_token_invalidate"},
+				Requires:    []string{"token_push_update"},
+				ScenarioSource: []ScenarioSource{
+					{Sheet: "Push Token ToIOP", CaseIDs: []string{"Push_Token_4"}},
+				},
+				NormativeSource: []NormativeSource{
+					{ID: "tokens-invalid", Reference: "mod_tokens", Title: "Token Invalidation"},
+					{ID: "transport-put", Reference: "transport_and_format#PUT", Title: "PUT Semantics"},
+				},
+			},
+			{
+				ID:          "rta_invalid",
+				Group:       "Real-time Authorization",
+				Title:       "Invalid Token Authorization",
+				Description: "Validate the peer response when the hub asks for authorization of an invalid token.",
+				Evaluator:   "rta_invalid",
+				ActionIDs:   []string{"run_rta_invalid"},
+				Requires:    []string{"token_push_invalidate"},
+				ScenarioSource: []ScenarioSource{
+					{Sheet: "RTA FromIOP", CaseIDs: []string{"RT_Authorization_2"}},
+				},
+				NormativeSource: []NormativeSource{
+					{ID: "tokens-rta", Reference: "mod_tokens", Title: "Real-time Authorization"},
+					{ID: "transport-response", Reference: "transport_and_format#response", Title: "OCPI Response Envelope"},
+				},
+			},
+			{
 				ID:          "pull_locations_full_delete_connector",
 				Group:       "Locations Pull",
 				Title:       "Full Locations Pull After Connector Removal",
@@ -415,38 +447,6 @@ func builtinOCPIEMSPSuite() SuiteDefinition {
 				NormativeSource: []NormativeSource{
 					{ID: "locations-removed", Reference: "mod_locations", Title: "Location Removal via EVSE Status"},
 					{ID: "transport-pagination", Reference: "transport_and_format#pagination", Title: "Date Range Pagination"},
-				},
-			},
-			{
-				ID:          "token_push_invalidate",
-				Group:       "Token Push",
-				Title:       "Token Push Invalidation",
-				Description: "Validate token invalidation using a Token push with valid set to false.",
-				Evaluator:   "token_push_invalidate",
-				ActionIDs:   []string{"arm_push_token_invalidate"},
-				Requires:    []string{"token_push_update"},
-				ScenarioSource: []ScenarioSource{
-					{Sheet: "Push Token ToIOP", CaseIDs: []string{"Push_Token_4"}},
-				},
-				NormativeSource: []NormativeSource{
-					{ID: "tokens-invalid", Reference: "mod_tokens", Title: "Token Invalidation"},
-					{ID: "transport-put", Reference: "transport_and_format#PUT", Title: "PUT Semantics"},
-				},
-			},
-			{
-				ID:          "rta_invalid",
-				Group:       "Real-time Authorization",
-				Title:       "Invalid Token Authorization",
-				Description: "Validate the peer response when the hub asks for authorization of an invalid token.",
-				Evaluator:   "rta_invalid",
-				ActionIDs:   []string{"run_rta_invalid"},
-				Requires:    []string{"token_push_invalidate"},
-				ScenarioSource: []ScenarioSource{
-					{Sheet: "RTA FromIOP", CaseIDs: []string{"RT_Authorization_2"}},
-				},
-				NormativeSource: []NormativeSource{
-					{ID: "tokens-rta", Reference: "mod_tokens", Title: "Real-time Authorization"},
-					{ID: "transport-response", Reference: "transport_and_format#response", Title: "OCPI Response Envelope"},
 				},
 			},
 			{

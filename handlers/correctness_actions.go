@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -402,7 +403,7 @@ func (h *Handler) armKnownToken(expectedValid *bool) (map[string]string, error) 
 		"contract_id":  token.ContractID,
 		"issuer":       token.Issuer,
 		"whitelist":    token.Whitelist,
-		"valid":        boolString(valid),
+		"valid":        strconv.FormatBool(valid),
 	}, nil
 }
 
@@ -436,9 +437,9 @@ func (h *Handler) runRealtimeAuthorization(session *correctness.TestSession, val
 			token = &tokenCopy
 		}
 	}
-	target, ok := selectCommandTarget(h.currentSeed())
-	if !ok {
-		return nil, fmt.Errorf("no active location is available in the sandbox for authorization")
+	target, err := h.ensureSessionCommandTarget(session.ID, "no active location is available in the sandbox for authorization")
+	if err != nil {
+		return nil, err
 	}
 	url := strings.TrimRight(endpoint, "/") + "/" + token.CountryCode + "/" + token.PartyID + "/" + token.UID + "/authorize"
 	body, _ := json.Marshal(map[string]string{"location_id": target.LocationID})
@@ -463,7 +464,7 @@ func (h *Handler) runRealtimeAuthorization(session *correctness.TestSession, val
 		"country_code": token.CountryCode,
 		"party_id":     token.PartyID,
 		"location_id":  target.LocationID,
-		"valid":        boolString(token.Valid),
+		"valid":        strconv.FormatBool(token.Valid),
 	}, nil
 }
 
@@ -475,52 +476,22 @@ func (h *Handler) armRemoteStart(sessionID string) (map[string]string, error) {
 		return nil, fmt.Errorf("no valid token is available in this session; rerun the token create or update steps first")
 	}
 
-	var output map[string]string
-	err = h.Correctness.UpdateSandbox(sessionID, func(sandbox *correctness.Sandbox) error {
-		if sandbox == nil || sandbox.Seed == nil {
-			return fmt.Errorf("session sandbox is not available")
-		}
+	target, err := h.ensureSessionCommandTarget(sessionID, "no non-removed location is available in the sandbox for START_SESSION")
+	if err != nil {
+		return nil, err
+	}
 
-		target, ok := selectCommandTarget(sandbox.Seed)
-		if !ok && h.Seed != nil {
-			baseTarget, baseLocation, baseOK := selectCommandTargetWithLocation(h.Seed)
-			if baseOK {
-				cloned := correctness.CloneSeed(&fakegen.SeedData{Locations: []fakegen.Location{*baseLocation}})
-				if len(cloned.Locations) > 0 {
-					restored := cloned.Locations[0]
-					replaced := false
-					for i := range sandbox.Seed.Locations {
-						if sandbox.Seed.Locations[i].ID == restored.ID {
-							sandbox.Seed.Locations[i] = restored
-							replaced = true
-							break
-						}
-					}
-					if !replaced {
-						sandbox.Seed.Locations = append(sandbox.Seed.Locations, restored)
-					}
-					target = baseTarget
-					ok = true
-				}
-			}
-		}
-		if !ok {
-			return fmt.Errorf("no non-removed location is available in the sandbox for START_SESSION")
-		}
-
-		output = map[string]string{
-			"location_id":  target.LocationID,
-			"evse_uid":     target.EVSEUID,
-			"connector_id": target.ConnectorID,
-			"token_uid":    token.UID,
-			"token_type":   token.Type,
-		}
-		if token.Whitelist != "" {
-			output["token_whitelist"] = token.Whitelist
-		}
-		return nil
-	})
-	return output, err
+	output := map[string]string{
+		"location_id":  target.LocationID,
+		"evse_uid":     target.EVSEUID,
+		"connector_id": target.ConnectorID,
+		"token_uid":    token.UID,
+		"token_type":   token.Type,
+	}
+	if token.Whitelist != "" {
+		output["token_whitelist"] = token.Whitelist
+	}
+	return output, nil
 }
 
 func (h *Handler) runEVSEStatusPush(session *correctness.TestSession, known bool) (map[string]string, error) {
@@ -811,6 +782,56 @@ func currentPeerToken(store Store, fallback string) string {
 	return fallback
 }
 
+func (h *Handler) ensureSessionCommandTarget(sessionID, missingMessage string) (commandTarget, error) {
+	var target commandTarget
+	err := h.Correctness.UpdateSandbox(sessionID, func(sandbox *correctness.Sandbox) error {
+		if sandbox == nil || sandbox.Seed == nil {
+			return fmt.Errorf("session sandbox is not available")
+		}
+		if existing, ok := selectCommandTarget(sandbox.Seed); ok {
+			target = existing
+			return nil
+		}
+		restored, ok := h.restoreCommandTarget(sandbox)
+		if !ok {
+			return fmt.Errorf("%s", missingMessage)
+		}
+		target = restored
+		return nil
+	})
+	if err != nil {
+		return commandTarget{}, err
+	}
+	return target, nil
+}
+
+func (h *Handler) restoreCommandTarget(sandbox *correctness.Sandbox) (commandTarget, bool) {
+	if sandbox == nil || sandbox.Seed == nil || h.Seed == nil {
+		return commandTarget{}, false
+	}
+	baseTarget, baseLocation, ok := selectCommandTargetWithLocation(h.Seed)
+	if !ok {
+		return commandTarget{}, false
+	}
+	cloned := correctness.CloneSeed(&fakegen.SeedData{Locations: []fakegen.Location{*baseLocation}})
+	if len(cloned.Locations) == 0 {
+		return commandTarget{}, false
+	}
+	restored := cloned.Locations[0]
+	replaced := false
+	for i := range sandbox.Seed.Locations {
+		if sandbox.Seed.Locations[i].ID == restored.ID {
+			sandbox.Seed.Locations[i] = restored
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		sandbox.Seed.Locations = append(sandbox.Seed.Locations, restored)
+	}
+	return baseTarget, true
+}
+
 type commandTarget struct {
 	LocationID  string
 	EVSEUID     string
@@ -844,11 +865,4 @@ func selectCommandTargetWithLocation(seed *fakegen.SeedData) (commandTarget, *fa
 		}
 	}
 	return commandTarget{}, nil, false
-}
-
-func boolString(value bool) string {
-	if value {
-		return "true"
-	}
-	return "false"
 }

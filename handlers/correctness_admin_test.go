@@ -701,6 +701,92 @@ func TestRunRealtimeAuthorizationValidUsesLatestValidToken(t *testing.T) {
 	}
 }
 
+func TestRunRealtimeAuthorizationInvalidRestoresHappyPathTarget(t *testing.T) {
+	h := testCorrectnessHandler()
+
+	var requestPath string
+	var requestBody map[string]string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status_code": 1000,
+			"timestamp":   "2026-01-01T00:00:00Z",
+			"data": map[string]any{
+				"allowed": "BLOCKED",
+				"token": map[string]any{
+					"uid": "TOK-INVALID",
+				},
+			},
+		})
+	}))
+	defer peer.Close()
+
+	session := createCorrectnessSessionForTest(t, h)
+	if err := h.Correctness.SetPeerState(session.ID, correctness.SessionPeerState{
+		Endpoints: []correctness.SessionPeerEndpoint{
+			{Identifier: "tokens", Role: "SENDER", URL: peer.URL + "/ocpi/2.2.1/sender/tokens"},
+		},
+	}); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+	reloaded, err := h.Correctness.GetSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+
+	overlay := h.Correctness.ActiveOverlay()
+	if overlay == nil {
+		t.Fatal("expected active overlay store")
+	}
+	invalidRaw, _ := json.Marshal(map[string]any{
+		"country_code": "NL",
+		"party_id":     "EMS",
+		"uid":          "TOK-INVALID",
+		"type":         "RFID",
+		"contract_id":  "CON-2",
+		"issuer":       "Issuer",
+		"whitelist":    "ALLOWED",
+		"valid":        false,
+		"last_updated": "2026-01-02T00:00:00Z",
+	})
+	if err := overlay.PutToken("NL", "EMS", "TOK-INVALID", invalidRaw); err != nil {
+		t.Fatalf("put invalid token: %v", err)
+	}
+	if err := h.Correctness.UpdateSandbox(session.ID, func(sandbox *correctness.Sandbox) error {
+		sandbox.Seed.Locations[0].EVSEs[0].Status = "REMOVED"
+		sandbox.Seed.Locations[0].EVSEs[0].Connectors = nil
+		return nil
+	}); err != nil {
+		t.Fatalf("remove happy-path target: %v", err)
+	}
+
+	output, err := h.runRealtimeAuthorization(reloaded, false)
+	if err != nil {
+		t.Fatalf("run realtime authorization: %v", err)
+	}
+
+	if !strings.Contains(requestPath, "/TOK-INVALID/authorize") {
+		t.Fatalf("expected invalid authorization to target TOK-INVALID, got path %q", requestPath)
+	}
+	if requestBody["location_id"] != "LOC-1" {
+		t.Fatalf("expected restored location LOC-1 in authorization request, got %#v", requestBody)
+	}
+	if output["location_id"] != "LOC-1" || output["valid"] != "false" {
+		t.Fatalf("expected output to record restored location and invalid token, got %#v", output)
+	}
+
+	loc := h.currentSeed().LocationByID("LOC-1")
+	if loc == nil {
+		t.Fatal("expected restored location in active seed")
+	}
+	if len(loc.EVSEs) == 0 || strings.EqualFold(loc.EVSEs[0].Status, "REMOVED") {
+		t.Fatalf("expected restored non-removed EVSE, got %#v", loc.EVSEs)
+	}
+}
+
 func TestArmRemoteStartRestoresHappyPathTarget(t *testing.T) {
 	h := testCorrectnessHandler()
 	session := createCorrectnessSessionForTest(t, h)

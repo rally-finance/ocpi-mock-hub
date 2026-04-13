@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -51,4 +52,47 @@ func TestRequestLogKeepsRecentEntriesInRingOrder(t *testing.T) {
 	if entries[len(entries)-1].Path != "/ocpi/2" {
 		t.Fatalf("expected oldest retained entry to be /ocpi/2, got %q", entries[len(entries)-1].Path)
 	}
+}
+
+func TestRequestLogFailedSlotWriteDoesNotAdvanceVisibleHistory(t *testing.T) {
+	store := &failingRequestLogStore{base: newRequestLogMemoryStore()}
+	log := NewRequestLog(store)
+
+	log.Add(RequestLogEntry{Timestamp: "2026-01-01T00:00:00Z", Method: "GET", Path: "/ok-1", Status: 200})
+	store.failEntryWrites = true
+	log.Add(RequestLogEntry{Timestamp: "2026-01-01T00:00:01Z", Method: "GET", Path: "/should-fail", Status: 200})
+	store.failEntryWrites = false
+
+	entries := log.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected failed slot write not to inflate visible entry count, got %d", len(entries))
+	}
+	if entries[0].Path != "/ok-1" {
+		t.Fatalf("expected only successful entry to remain visible, got %q", entries[0].Path)
+	}
+
+	log.Add(RequestLogEntry{Timestamp: "2026-01-01T00:00:02Z", Method: "GET", Path: "/ok-2", Status: 200})
+	entries = log.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("expected next successful write to restore two visible entries, got %d", len(entries))
+	}
+	if entries[0].Path != "/ok-2" || entries[1].Path != "/ok-1" {
+		t.Fatalf("unexpected entry order after retry: %#v", entries)
+	}
+}
+
+type failingRequestLogStore struct {
+	base            *requestLogMemoryStore
+	failEntryWrites bool
+}
+
+func (s *failingRequestLogStore) GetBlob(key string) ([]byte, error) {
+	return s.base.GetBlob(key)
+}
+
+func (s *failingRequestLogStore) UpdateBlob(key string, fn func([]byte) ([]byte, error)) error {
+	if s.failEntryWrites && key != requestLogMetaBlobKey {
+		return errors.New("simulated entry write failure")
+	}
+	return s.base.UpdateBlob(key, fn)
 }

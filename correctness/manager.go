@@ -58,12 +58,12 @@ type sessionRuntime struct {
 }
 
 type Manager struct {
-	mu        sync.Mutex
-	baseSeed  *fakegen.SeedData
-	suites    map[string]SuiteDefinition
-	sessions  map[string]*sessionRuntime
-	order     []string
-	activeID  string
+	mu         sync.Mutex
+	baseSeed   *fakegen.SeedData
+	suites     map[string]SuiteDefinition
+	sessions   map[string]*sessionRuntime
+	order      []string
+	activeID   string
 	stateStore StateStore
 }
 
@@ -165,15 +165,8 @@ func normalizeSessionOrder(order []string, sessions map[string]*sessionRuntime) 
 	return append(normalized, missing...)
 }
 
-func intMax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func materializeActionStates(persisted persistedSessionRuntime, suite SuiteDefinition) map[string]*ActionState {
-	actions := make(map[string]*ActionState, intMax(len(persisted.Actions), len(suite.Actions)))
+	actions := make(map[string]*ActionState, max(len(persisted.Actions), len(suite.Actions)))
 	for id, action := range persisted.Actions {
 		copy := ActionState{
 			ID:          action.ID,
@@ -214,7 +207,7 @@ func materializeActionStates(persisted persistedSessionRuntime, suite SuiteDefin
 }
 
 func materializeCaseResults(persisted persistedSessionRuntime, suite SuiteDefinition) map[string]*CaseResult {
-	results := make(map[string]*CaseResult, intMax(len(persisted.Cases), len(suite.Cases)))
+	results := make(map[string]*CaseResult, max(len(persisted.Cases), len(suite.Cases)))
 	for id, result := range persisted.Cases {
 		copy := result
 		copy.Messages = append([]string(nil), result.Messages...)

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -132,6 +134,7 @@ func (rl *RequestLog) Add(entry RequestLogEntry) {
 
 	var writeIndex int
 	var sequence int64
+	var previousCount int
 	if err := rl.stateStore.UpdateBlob(requestLogMetaBlobKey, func(raw []byte) ([]byte, error) {
 		state, err := decodeRequestLogState(raw)
 		if err != nil {
@@ -139,6 +142,7 @@ func (rl *RequestLog) Add(entry RequestLogEntry) {
 		}
 
 		writeIndex = state.NextIndex
+		previousCount = state.Count
 		state.LastSequence++
 		sequence = state.LastSequence
 		state.NextIndex = (state.NextIndex + 1) % maxLogEntries
@@ -147,6 +151,7 @@ func (rl *RequestLog) Add(entry RequestLogEntry) {
 		}
 		return json.Marshal(state)
 	}); err != nil {
+		log.Printf("[requestlog] failed to reserve log slot: %v", err)
 		return
 	}
 
@@ -158,9 +163,35 @@ func (rl *RequestLog) Add(entry RequestLogEntry) {
 		return
 	}
 
-	_ = rl.stateStore.UpdateBlob(requestLogEntryBlobKey(writeIndex), func([]byte) ([]byte, error) {
+	if err := rl.stateStore.UpdateBlob(requestLogEntryBlobKey(writeIndex), func([]byte) ([]byte, error) {
 		return payload, nil
-	})
+	}); err != nil {
+		log.Printf("[requestlog] failed to persist log slot %d sequence %d: %v", writeIndex, sequence, err)
+		rl.rollbackReservedEntry(writeIndex, sequence, previousCount)
+	}
+}
+
+func (rl *RequestLog) rollbackReservedEntry(writeIndex int, sequence int64, previousCount int) {
+	if rl == nil || rl.stateStore == nil {
+		return
+	}
+	expectedNextIndex := (writeIndex + 1) % maxLogEntries
+	if err := rl.stateStore.UpdateBlob(requestLogMetaBlobKey, func(raw []byte) ([]byte, error) {
+		state, err := decodeRequestLogState(raw)
+		if err != nil {
+			return nil, err
+		}
+		if state.LastSequence != sequence || state.NextIndex != expectedNextIndex {
+			return json.Marshal(state)
+		}
+
+		state.LastSequence--
+		state.NextIndex = writeIndex
+		state.Count = previousCount
+		return json.Marshal(state)
+	}); err != nil {
+		log.Printf("[requestlog] failed to roll back log reservation for slot %d sequence %d: %v", writeIndex, sequence, err)
+	}
 }
 
 func (rl *RequestLog) Entries() []RequestLogEntry {
@@ -176,12 +207,9 @@ func (rl *RequestLog) Entries() []RequestLogEntry {
 		return nil
 	}
 
-	entries := make([]RequestLogEntry, 0, state.Count)
-	for i := 0; i < state.Count; i++ {
-		index := (state.NextIndex - 1 - i + maxLogEntries) % maxLogEntries
-		expectedSequence := state.LastSequence - int64(i)
-
-		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(index))
+	slots := make([]requestLogSlot, 0, maxLogEntries)
+	for i := 0; i < maxLogEntries; i++ {
+		slotRaw, err := rl.stateStore.GetBlob(requestLogEntryBlobKey(i))
 		if err != nil {
 			continue
 		}
@@ -189,10 +217,24 @@ func (rl *RequestLog) Entries() []RequestLogEntry {
 		if err != nil {
 			continue
 		}
-		if slot.Sequence != expectedSequence {
+		if slot.Sequence <= 0 {
 			continue
 		}
-		entries = append(entries, slot.Entry)
+		slots = append(slots, slot)
+	}
+
+	sort.Slice(slots, func(i, j int) bool {
+		return slots[i].Sequence > slots[j].Sequence
+	})
+
+	limit := state.Count
+	if limit > len(slots) {
+		limit = len(slots)
+	}
+
+	entries := make([]RequestLogEntry, 0, limit)
+	for i := 0; i < limit; i++ {
+		entries = append(entries, slots[i].Entry)
 	}
 
 	return entries

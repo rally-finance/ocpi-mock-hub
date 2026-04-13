@@ -739,7 +739,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <div class="card">
         <div class="toolbar">
           <h3 style="margin:0">Sessions</h3>
-          <span class="auto-refresh">Auto-refresh every 5s</span>
+          <span class="auto-refresh">Refresh manually while waiting for peer traffic</span>
         </div>
         <div id="correctness-sessions" class="stack-list"></div>
       </div>
@@ -747,7 +747,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <div class="card">
         <div class="toolbar">
           <h3 style="margin:0">Current Step</h3>
-          <button class="btn-secondary" onclick="rerunCorrectnessSession()" id="btn-correctness-rerun" disabled>Rerun</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-secondary" onclick="refreshCorrectness()" id="btn-correctness-refresh">Refresh</button>
+            <button class="btn-secondary" onclick="deleteCorrectnessSession()" id="btn-correctness-delete" disabled>Delete Session</button>
+            <button class="btn-secondary" onclick="rerunCorrectnessSession()" id="btn-correctness-rerun" disabled>Rerun</button>
+          </div>
         </div>
         <div id="correctness-current-step" class="callout">Create or select a session to begin.</div>
         <div id="correctness-summary" class="badge-row" style="margin-top:12px"></div>
@@ -802,6 +806,8 @@ let correctnessSessions = [];
 let correctnessSession = null;
 let selectedCorrectnessSessionId = '';
 let correctnessLoadToken = 0;
+let correctnessCheckpointDrafts = {};
+let correctnessExpandedEvents = {};
 
 // Navigation
 $$('.nav-link').forEach(link => {
@@ -826,7 +832,7 @@ function setupAutoRefresh(section) {
   const generation = refreshGeneration;
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = null;
-  if (['sessions', 'cdrs', 'tokens', 'reservations', 'log', 'correctness'].includes(section)) {
+  if (['sessions', 'cdrs', 'tokens', 'reservations', 'log'].includes(section)) {
     scheduleAutoRefresh(section, generation);
   }
 }
@@ -1191,6 +1197,56 @@ function correctnessCheckpointFieldId(kind, checkpointID) {
   return `correctness-${kind}-${encodeURIComponent(String(checkpointID || ''))}`;
 }
 
+function correctnessCheckpointDraftKey(sessionID, checkpointID) {
+  return `${sessionID || ''}::${checkpointID || ''}`;
+}
+
+function correctnessEventStateKey(sessionID, eventID) {
+  return `${sessionID || ''}::${eventID || ''}`;
+}
+
+function checkpointDraft(checkpointID, sessionID = selectedCorrectnessSessionId) {
+  return correctnessCheckpointDrafts[correctnessCheckpointDraftKey(sessionID, checkpointID)] || {};
+}
+
+function setCorrectnessCheckpointDraft(checkpointID, field, value, sessionID = selectedCorrectnessSessionId) {
+  if (!sessionID || !checkpointID) return;
+  const key = correctnessCheckpointDraftKey(sessionID, checkpointID);
+  correctnessCheckpointDrafts[key] = {
+    ...correctnessCheckpointDrafts[key],
+    [field]: value
+  };
+}
+
+function clearCorrectnessCheckpointDraft(checkpointID, sessionID = selectedCorrectnessSessionId) {
+  if (!sessionID || !checkpointID) return;
+  delete correctnessCheckpointDrafts[correctnessCheckpointDraftKey(sessionID, checkpointID)];
+}
+
+function clearCorrectnessSessionLocalState(sessionID) {
+  if (!sessionID) return;
+  Object.keys(correctnessCheckpointDrafts).forEach(key => {
+    if (key.startsWith(sessionID + '::')) delete correctnessCheckpointDrafts[key];
+  });
+  Object.keys(correctnessExpandedEvents).forEach(key => {
+    if (key.startsWith(sessionID + '::')) delete correctnessExpandedEvents[key];
+  });
+}
+
+function isCorrectnessEventExpanded(eventID, sessionID = selectedCorrectnessSessionId) {
+  return !!correctnessExpandedEvents[correctnessEventStateKey(sessionID, eventID)];
+}
+
+function setCorrectnessEventExpanded(eventID, open, sessionID = selectedCorrectnessSessionId) {
+  if (!sessionID || !eventID) return;
+  const key = correctnessEventStateKey(sessionID, eventID);
+  if (open) {
+    correctnessExpandedEvents[key] = true;
+  } else {
+    delete correctnessExpandedEvents[key];
+  }
+}
+
 function fmtTime(iso) {
   if (!iso) return '—';
   try {
@@ -1312,6 +1368,7 @@ function renderCorrectnessSummary() {
   const step = $('#correctness-current-step');
   const summary = $('#correctness-summary');
   const rerun = $('#btn-correctness-rerun');
+  const remove = $('#btn-correctness-delete');
   const createButton = $('#btn-correctness-create');
 
   createButton.disabled = hasActiveCorrectnessSession();
@@ -1320,6 +1377,8 @@ function renderCorrectnessSummary() {
     step.innerHTML = 'Create or select a session to begin.';
     summary.innerHTML = '';
     rerun.disabled = true;
+    remove.disabled = true;
+    remove.textContent = 'Delete Session';
     return;
   }
 
@@ -1347,6 +1406,8 @@ function renderCorrectnessSummary() {
   ].join('');
 
   rerun.disabled = correctnessSession.status !== 'completed' || hasActiveCorrectnessSession();
+  remove.disabled = false;
+  remove.textContent = correctnessSession.status === 'running' ? 'Abort & Delete' : 'Delete Session';
 }
 
 function renderCorrectnessActions() {
@@ -1431,6 +1492,9 @@ function renderCorrectnessCheckpoints() {
   root.innerHTML = pending.map(({ result, checkpoint }) => {
     const answerID = correctnessCheckpointFieldId('answer', checkpoint.id);
     const notesID = correctnessCheckpointFieldId('notes', checkpoint.id);
+    const draft = checkpointDraft(checkpoint.id);
+    const answerValue = draft.answer ?? checkpoint.answer ?? '';
+    const notesValue = draft.notes ?? checkpoint.notes ?? '';
     return `
     <div class="panel-item">
       <div class="panel-title">
@@ -1445,14 +1509,18 @@ function renderCorrectnessCheckpoints() {
         <input
           type="text"
           id="${escAttr(answerID)}"
+          data-checkpoint-id="${escAttr(checkpoint.id)}"
           placeholder="${escAttr(checkpoint.placeholder || 'Add your observation')}"
-          value="${escAttr(checkpoint.answer || '')}"
+          value="${escAttr(answerValue)}"
+          oninput="setCorrectnessCheckpointDraft(this.dataset.checkpointId, 'answer', this.value)"
         />
         <input
           type="text"
           id="${escAttr(notesID)}"
+          data-checkpoint-id="${escAttr(checkpoint.id)}"
           placeholder="Optional notes"
-          value="${escAttr(checkpoint.notes || '')}"
+          value="${escAttr(notesValue)}"
+          oninput="setCorrectnessCheckpointDraft(this.dataset.checkpointId, 'notes', this.value)"
         />
         <div class="action-controls" style="margin-top:2px">
           <span class="meta">Only use manual confirmation when the traffic log cannot prove the behavior on its own.</span>
@@ -1506,8 +1574,9 @@ function renderCorrectnessEvents() {
     const requestPreview = shortText(event.request_body, 700);
     const responsePreview = shortText(event.response_body, 700);
     const path = event.path || event.url || '—';
+    const open = isCorrectnessEventExpanded(event.id) ? ' open' : '';
     return `
-      <details class="event-card">
+      <details class="event-card"${open} data-event-id="${escAttr(event.id)}" ontoggle="setCorrectnessEventExpanded(this.dataset.eventId, this.open)">
         <summary>
           <div class="panel-title" style="margin-bottom:0">
             <div>
@@ -1575,7 +1644,8 @@ async function loadCorrectnessSession(sessionID, options = {}) {
   return true;
 }
 
-async function loadCorrectness() {
+async function loadCorrectness(options = {}) {
+  const { preserveMissingSelected = true } = options;
   const loadToken = ++correctnessLoadToken;
   const previousSuites = correctnessSuites;
   const previousSessions = correctnessSessions;
@@ -1601,7 +1671,7 @@ async function loadCorrectness() {
       previousSession.id === previousSelection &&
       !sessions.some(session => session.id === previousSelection);
 
-    if (shouldPreserveSelected) {
+    if (preserveMissingSelected && shouldPreserveSelected) {
       console.warn('loadCorrectness: preserving the last known correctness session after a transient empty or inconsistent refresh');
       correctnessSuites = suites.length ? suites : previousSuites;
       correctnessSessions = previousSessions;
@@ -1620,6 +1690,7 @@ async function loadCorrectness() {
       selectedCorrectnessSessionId = correctnessSessions[0].id;
     }
     if (selectedCorrectnessSessionId && !correctnessSessions.some(session => session.id === selectedCorrectnessSessionId)) {
+      clearCorrectnessSessionLocalState(selectedCorrectnessSessionId);
       selectedCorrectnessSessionId = correctnessSessions[0]?.id || '';
     }
 
@@ -1696,6 +1767,14 @@ async function selectCorrectnessSession(sessionID) {
   await loadCorrectnessSession(sessionID);
 }
 
+async function refreshCorrectness() {
+  try {
+    await loadCorrectness();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 async function runCorrectnessAction(actionID) {
   if (!selectedCorrectnessSessionId) {
     toast('Select a session first.', 'error');
@@ -1729,8 +1808,37 @@ async function submitCorrectnessCheckpoint(checkpointID) {
       method: 'POST',
       body: JSON.stringify({ answer, notes })
     });
+    clearCorrectnessCheckpointDraft(checkpointID);
     toast('Checkpoint saved.', 'success');
     await loadCorrectness();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteCorrectnessSession() {
+  if (!selectedCorrectnessSessionId || !correctnessSession) {
+    toast('Select a session first.', 'error');
+    return;
+  }
+  const isActive = correctnessSession.status === 'running';
+  const message = isActive
+    ? 'Abort and delete this active correctness session? This will discard its sandbox, evidence, and progress.'
+    : 'Delete this correctness session and its saved evidence?';
+  if (!confirm(message)) return;
+
+  const deletedSessionID = selectedCorrectnessSessionId;
+  try {
+    await apiChecked(`/admin/test-sessions/${encodeURIComponent(deletedSessionID)}`, {
+      method: 'DELETE'
+    });
+    clearCorrectnessSessionLocalState(deletedSessionID);
+    if (selectedCorrectnessSessionId === deletedSessionID) {
+      selectedCorrectnessSessionId = '';
+    }
+    correctnessSession = null;
+    toast(isActive ? 'Correctness session aborted.' : 'Correctness session deleted.', 'success');
+    await loadCorrectness({ preserveMissingSelected: false });
   } catch (e) {
     toast(e.message, 'error');
   }

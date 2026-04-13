@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"sync"
 	"time"
@@ -493,6 +494,35 @@ func (m *Manager) RerunSession(id string) (*TestSession, error) {
 		return nil, err
 	}
 	return created, nil
+}
+
+func (m *Manager) DeleteSession(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	err := m.withStateMutationLocked(func() error {
+		if m.sessions[id] == nil {
+			return ErrSessionNotFound
+		}
+		delete(m.sessions, id)
+		m.order = slices.DeleteFunc(m.order, func(candidate string) bool {
+			return candidate == id
+		})
+		if m.activeID == id {
+			m.activeID = ""
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if cleanupErr := m.stateStore.UpdateBlob(overlayBlobKey(id), func([]byte) ([]byte, error) {
+		return nil, nil
+	}); cleanupErr != nil {
+		log.Printf("[correctness] failed to clean overlay state for deleted session %s: %v", id, cleanupErr)
+	}
+	return nil
 }
 
 func (m *Manager) newSessionLocked(cfg SessionConfig) (*TestSession, error) {

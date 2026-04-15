@@ -104,11 +104,10 @@ func (h *Handler) registerCredentials(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteCredentials(w http.ResponseWriter, r *http.Request) {
 	store := h.storeForRequest(r)
-	store.SetTokenB("")
-	store.SetEMSPCallbackURL("")
-	store.SetEMSPCredentials(nil)
-	store.SetEMSPOwnToken("")
-	store.SetEMSPVersionsURL("")
+	if err := h.resetHandshakeState(store); err != nil {
+		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to clear connection state")
+		return
+	}
 
 	ocpiutil.OK(w, r, nil)
 }

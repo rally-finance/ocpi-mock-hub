@@ -89,6 +89,7 @@ func NewRouter(app *App) http.Handler {
 	r.Post("/admin/mode", h.SetMode)
 	r.Get("/admin/mode", h.GetMode)
 	r.Post("/admin/initiate-handshake", h.InitiateHandshake)
+	r.Post("/admin/deregister", h.DeregisterConnection)
 	r.Post("/admin/reset", h.ResetConnection)
 	r.Post("/admin/trigger-tick", h.TriggerTick)
 	r.Post("/admin/push-locations", h.PushLocations)

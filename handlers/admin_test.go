@@ -73,6 +73,72 @@ func TestGetStatus_IncludesReservationCount(t *testing.T) {
 	}
 }
 
+func TestGetStatus_ReportsDeregisterReadiness(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	store.tokenB = "peer-token-b"
+	store.emspToken = "peer-token-c"
+	store.versionsURL = "https://peer.example.com/ocpi/versions"
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/admin/status", nil)
+	h.GetStatus(w, r)
+
+	var status connectionStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !status.CanDeregister {
+		t.Fatalf("expected can_deregister=true, got false with reason %q", status.DeregisterReason)
+	}
+	if status.DeregisterReason != "" {
+		t.Fatalf("expected empty deregister_reason, got %q", status.DeregisterReason)
+	}
+}
+
+func TestGetStatus_ReportsIncompleteDeregisterState(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	store.tokenB = "peer-token-b"
+	store.versionsURL = "https://peer.example.com/ocpi/versions"
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/admin/status", nil)
+	h.GetStatus(w, r)
+
+	var status connectionStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.CanDeregister {
+		t.Fatal("expected can_deregister=false when peer token is missing")
+	}
+	if status.DeregisterReason != "Missing stored peer credentials token" {
+		t.Fatalf("unexpected deregister_reason %q", status.DeregisterReason)
+	}
+}
+
+func TestGetStatus_EmptyMaskedTokensStayEmpty(t *testing.T) {
+	h := testHandler()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/admin/status", nil)
+	h.GetStatus(w, r)
+
+	var status connectionStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.TokenBMasked != "" {
+		t.Fatalf("expected empty token_b_masked, got %q", status.TokenBMasked)
+	}
+	if status.EMSPOwnToken != "" {
+		t.Fatalf("expected empty emsp_own_token_masked, got %q", status.EMSPOwnToken)
+	}
+}
+
 func TestAdminAuthorize_Allowed(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

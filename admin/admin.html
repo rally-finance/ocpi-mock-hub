@@ -516,10 +516,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     <div class="card">
       <h3>Actions</h3>
-      <div style="display: flex; gap: 8px;">
-        <button class="btn-danger" onclick="resetConnection()">Reset Connection</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="btn-deregister" class="btn-danger" onclick="deregisterConnection()">Deregister</button>
+        <button class="btn-secondary" onclick="resetConnection()">Reset Local State</button>
         <button class="btn-secondary" onclick="triggerTick()">Trigger Tick</button>
       </div>
+      <div id="actions-note" class="muted" style="margin-top:12px"></div>
+      <div id="deregister-result" style="margin-top: 12px;"></div>
     </div>
 
     <div class="card">
@@ -890,6 +893,21 @@ async function loadStatus() {
     $$('#mode-buttons button').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === data.mode);
     });
+
+    const deregisterBtn = $('#btn-deregister');
+    if (deregisterBtn) {
+      deregisterBtn.disabled = !data.can_deregister;
+      deregisterBtn.title = data.can_deregister
+        ? 'Send OCPI DELETE Credentials to the connected peer.'
+        : (data.deregister_reason || 'Deregister unavailable');
+    }
+
+    const actionsNote = $('#actions-note');
+    if (actionsNote) {
+      actionsNote.textContent = data.can_deregister
+        ? 'Deregister sends OCPI DELETE Credentials to the peer. Reset Local State only clears the local handshake fields.'
+        : 'Deregister unavailable: ' + (data.deregister_reason || 'Peer connection details are incomplete.');
+    }
   } catch (e) {
     console.error('loadStatus:', e);
   }
@@ -951,13 +969,36 @@ async function initiateHandshake() {
 
 // Reset
 async function resetConnection() {
-  if (!confirm('Reset connection state? This clears Token B, eMSP credentials, and all stored data.')) return;
+  if (!confirm('Reset only the local handshake state? This does not contact the peer and does not clear sessions, CDRs, tokens, or reservations.')) return;
   try {
-    await api('/admin/reset', { method: 'POST' });
-    toast('Connection reset', 'success');
+    await apiChecked('/admin/reset', { method: 'POST' });
+    $('#deregister-result').innerHTML = '';
+    toast('Local handshake state reset', 'success');
     loadStatus();
   } catch (e) {
     toast('Reset failed: ' + e.message, 'error');
+  }
+}
+
+async function deregisterConnection() {
+  const btn = $('#btn-deregister');
+  if (!btn || btn.disabled) return;
+  if (!confirm('Send OCPI DELETE Credentials to the connected peer? Local handshake state will be cleared only if the peer confirms deregistration.')) return;
+
+  const result = $('#deregister-result');
+  btn.disabled = true;
+  btn.textContent = 'Deregistering...';
+
+  try {
+    const data = await apiChecked('/admin/deregister', { method: 'POST' });
+    result.innerHTML = `<span class="badge badge-green">Success</span> Peer acknowledged DELETE Credentials at ${esc(data.credentials_url || 'the discovered credentials endpoint')}`;
+    toast('Peer deregistration successful', 'success');
+  } catch (e) {
+    result.innerHTML = `<span class="badge badge-red">Failed</span> ${esc(e.message)}`;
+    toast('Deregister failed: ' + e.message, 'error');
+  } finally {
+    btn.textContent = 'Deregister';
+    loadStatus();
   }
 }
 

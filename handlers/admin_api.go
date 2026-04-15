@@ -17,6 +17,8 @@ type connectionStatus struct {
 	EMSPCallbackURL  string `json:"emsp_callback_url"`
 	EMSPVersionsURL  string `json:"emsp_versions_url"`
 	EMSPOwnToken     string `json:"emsp_own_token_masked"`
+	CanDeregister    bool   `json:"can_deregister"`
+	DeregisterReason string `json:"deregister_reason"`
 	HubCountry       string `json:"hub_country"`
 	HubParty         string `json:"hub_party"`
 	Mode             string `json:"mode"`
@@ -29,13 +31,6 @@ type connectionStatus struct {
 	ReservationCount int    `json:"reservation_count"`
 }
 
-func maskToken(t string) string {
-	if len(t) <= 8 {
-		return "****"
-	}
-	return t[:4] + "..." + t[len(t)-4:]
-}
-
 func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	tokenB, _ := h.Store.GetTokenB()
 	callbackURL, _ := h.Store.GetEMSPCallbackURL()
@@ -46,6 +41,7 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	cdrs, _ := h.Store.ListCDRs()
 	tokens, _ := h.Store.ListTokens()
 	reservations, _ := h.Store.ListReservations()
+	_, deregisterReason := h.currentDeregisterState(h.Store)
 
 	status := connectionStatus{
 		Connected:        tokenB != "",
@@ -54,6 +50,8 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		EMSPCallbackURL:  callbackURL,
 		EMSPVersionsURL:  versionsURL,
 		EMSPOwnToken:     maskToken(emspOwnToken),
+		CanDeregister:    deregisterReason == "",
+		DeregisterReason: deregisterReason,
 		HubCountry:       h.Config.HubCountry,
 		HubParty:         h.Config.HubParty,
 		Mode:             mode,
@@ -188,11 +186,10 @@ func (h *Handler) AdminAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ResetConnection(w http.ResponseWriter, r *http.Request) {
-	h.Store.SetTokenB("")
-	h.Store.SetEMSPCallbackURL("")
-	h.Store.SetEMSPCredentials(nil)
-	h.Store.SetEMSPOwnToken("")
-	h.Store.SetEMSPVersionsURL("")
+	if err := h.resetHandshakeState(h.Store); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear local handshake state: " + err.Error()})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 }

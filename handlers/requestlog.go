@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -66,13 +68,14 @@ func (m *requestLogMemoryStore) UpdateBlob(key string, fn func([]byte) ([]byte, 
 }
 
 type RequestLogEntry struct {
-	Timestamp  string `json:"timestamp"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	OCPIFrom   string `json:"ocpi_from,omitempty"`
-	OCPITo     string `json:"ocpi_to,omitempty"`
+	Timestamp   string `json:"timestamp"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	Status      int    `json:"status"`
+	DurationMS  int64  `json:"duration_ms"`
+	OCPIFrom    string `json:"ocpi_from,omitempty"`
+	OCPITo      string `json:"ocpi_to,omitempty"`
+	RequestBody string `json:"request_body,omitempty"`
 }
 
 type requestLogState struct {
@@ -246,6 +249,14 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 				return
 			}
 
+			var requestBody string
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+				if bodyBytes, err := io.ReadAll(r.Body); err == nil {
+					requestBody = string(bodyBytes)
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+			}
+
 			start := time.Now()
 			sc := &statusCapture{ResponseWriter: w, status: 200}
 
@@ -257,13 +268,14 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 			}
 
 			rl.Add(RequestLogEntry{
-				Timestamp:  start.UTC().Format(time.RFC3339),
-				Method:     r.Method,
-				Path:       path,
-				Status:     sc.status,
-				DurationMS: time.Since(start).Milliseconds(),
-				OCPIFrom:   r.Header.Get("OCPI-from-country-code") + "*" + r.Header.Get("OCPI-from-party-id"),
-				OCPITo:     r.Header.Get("OCPI-to-country-code") + "*" + r.Header.Get("OCPI-to-party-id"),
+				Timestamp:   start.UTC().Format(time.RFC3339),
+				Method:      r.Method,
+				Path:        path,
+				Status:      sc.status,
+				DurationMS:  time.Since(start).Milliseconds(),
+				OCPIFrom:    r.Header.Get("OCPI-from-country-code") + "*" + r.Header.Get("OCPI-from-party-id"),
+				OCPITo:      r.Header.Get("OCPI-to-country-code") + "*" + r.Header.Get("OCPI-to-party-id"),
+				RequestBody: requestBody,
 			})
 		})
 	}

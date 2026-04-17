@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	maxLogEntries         = 500
-	requestLogMetaBlobKey = "request-log:meta"
-	requestLogEntryPrefix = "request-log:entry:"
+	maxLogEntries           = 500
+	maxRequestBodyLogBytes  = 64 * 1024
+	requestBodyTruncatedTag = "\n... [truncated]"
+	requestLogMetaBlobKey   = "request-log:meta"
+	requestLogEntryPrefix   = "request-log:entry:"
 )
 
 var ignoredPaths = map[string]bool{
@@ -251,9 +253,22 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 
 			var requestBody string
 			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
-				if bodyBytes, err := io.ReadAll(r.Body); err == nil {
-					requestBody = string(bodyBytes)
-					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				originalBody := r.Body
+				limited := io.LimitReader(originalBody, maxRequestBodyLogBytes+1)
+				if bodyBytes, err := io.ReadAll(limited); err == nil {
+					if len(bodyBytes) > maxRequestBodyLogBytes {
+						requestBody = string(bodyBytes[:maxRequestBodyLogBytes]) + requestBodyTruncatedTag
+						r.Body = struct {
+							io.Reader
+							io.Closer
+						}{
+							Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
+							Closer: originalBody,
+						}
+					} else {
+						requestBody = string(bodyBytes)
+						r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					}
 				}
 			}
 

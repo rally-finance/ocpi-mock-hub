@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,9 +13,11 @@ import (
 )
 
 const (
-	maxLogEntries         = 500
-	requestLogMetaBlobKey = "request-log:meta"
-	requestLogEntryPrefix = "request-log:entry:"
+	maxLogEntries           = 500
+	maxRequestBodyLogBytes  = 64 * 1024
+	requestBodyTruncatedTag = "\n... [truncated]"
+	requestLogMetaBlobKey   = "request-log:meta"
+	requestLogEntryPrefix   = "request-log:entry:"
 )
 
 var ignoredPaths = map[string]bool{
@@ -66,13 +70,14 @@ func (m *requestLogMemoryStore) UpdateBlob(key string, fn func([]byte) ([]byte, 
 }
 
 type RequestLogEntry struct {
-	Timestamp  string `json:"timestamp"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	OCPIFrom   string `json:"ocpi_from,omitempty"`
-	OCPITo     string `json:"ocpi_to,omitempty"`
+	Timestamp   string `json:"timestamp"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	Status      int    `json:"status"`
+	DurationMS  int64  `json:"duration_ms"`
+	OCPIFrom    string `json:"ocpi_from,omitempty"`
+	OCPITo      string `json:"ocpi_to,omitempty"`
+	RequestBody string `json:"request_body,omitempty"`
 }
 
 type requestLogState struct {
@@ -246,6 +251,39 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 				return
 			}
 
+			var requestBody string
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+				originalBody := r.Body
+				limited := io.LimitReader(originalBody, maxRequestBodyLogBytes+1)
+				bodyBytes, err := io.ReadAll(limited)
+				switch {
+				case err != nil:
+					// ReadAll may have consumed part of originalBody before failing;
+					// splice the already-consumed bytes back in front of the remaining
+					// stream so the downstream handler sees the same bytes (and any
+					// subsequent read error) it would have without this middleware.
+					r.Body = struct {
+						io.Reader
+						io.Closer
+					}{
+						Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
+						Closer: originalBody,
+					}
+				case len(bodyBytes) > maxRequestBodyLogBytes:
+					requestBody = string(bodyBytes[:maxRequestBodyLogBytes]) + requestBodyTruncatedTag
+					r.Body = struct {
+						io.Reader
+						io.Closer
+					}{
+						Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
+						Closer: originalBody,
+					}
+				default:
+					requestBody = string(bodyBytes)
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+			}
+
 			start := time.Now()
 			sc := &statusCapture{ResponseWriter: w, status: 200}
 
@@ -257,13 +295,14 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 			}
 
 			rl.Add(RequestLogEntry{
-				Timestamp:  start.UTC().Format(time.RFC3339),
-				Method:     r.Method,
-				Path:       path,
-				Status:     sc.status,
-				DurationMS: time.Since(start).Milliseconds(),
-				OCPIFrom:   r.Header.Get("OCPI-from-country-code") + "*" + r.Header.Get("OCPI-from-party-id"),
-				OCPITo:     r.Header.Get("OCPI-to-country-code") + "*" + r.Header.Get("OCPI-to-party-id"),
+				Timestamp:   start.UTC().Format(time.RFC3339),
+				Method:      r.Method,
+				Path:        path,
+				Status:      sc.status,
+				DurationMS:  time.Since(start).Milliseconds(),
+				OCPIFrom:    r.Header.Get("OCPI-from-country-code") + "*" + r.Header.Get("OCPI-from-party-id"),
+				OCPITo:      r.Header.Get("OCPI-to-country-code") + "*" + r.Header.Get("OCPI-to-party-id"),
+				RequestBody: requestBody,
 			})
 		})
 	}

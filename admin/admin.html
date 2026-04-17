@@ -443,6 +443,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   overflow-x: auto;
 }
 
+tr.log-row-expandable { cursor: pointer; }
+tr.log-row-expandable:hover { background: rgba(255,255,255,0.04); }
+tr.log-row-expandable td:first-child::before { content: '\25B6'; margin-right: 6px; font-size: 9px; display: inline-block; transition: transform .15s; }
+tr.log-row-expandable.open td:first-child::before { transform: rotate(90deg); }
+tr.log-detail td { padding: 0 !important; }
+tr.log-detail .log-body-wrap { padding: 8px 12px 12px; }
+
 @media (max-width: 720px) {
   .container {
     padding: 16px 12px;
@@ -1093,6 +1100,13 @@ async function loadCDRs() {
 // Request Log
 let logData = [];
 
+function toggleLogDetail(btn) {
+  const tr = btn.closest('tr');
+  const detail = tr.nextElementSibling;
+  const open = tr.classList.toggle('open');
+  detail.style.display = open ? '' : 'none';
+}
+
 function renderLogRows(entries) {
   const body = $('#log-body');
   if (!entries.length) {
@@ -1101,7 +1115,9 @@ function renderLogRows(entries) {
   }
   body.innerHTML = entries.map(e => {
     const statusClass = e.status < 300 ? 'badge-green' : e.status < 500 ? 'badge-orange' : 'badge-red';
-    return `<tr>
+    const hasBody = !!e.request_body;
+    const rowClass = hasBody ? ' class="log-row-expandable" onclick="toggleLogDetail(this)"' : '';
+    let html = `<tr${rowClass}>
       <td>${fmtTime(e.timestamp)}</td>
       <td><strong>${e.method}</strong></td>
       <td title="${esc(e.path)}" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.path)}</td>
@@ -1110,6 +1126,15 @@ function renderLogRows(entries) {
       <td>${e.ocpi_from !== '*' ? esc(e.ocpi_from) : ''}</td>
       <td>${e.ocpi_to !== '*' ? esc(e.ocpi_to) : ''}</td>
     </tr>`;
+    if (hasBody) {
+      html += `<tr class="log-detail" style="display:none">
+        <td colspan="7"><div class="log-body-wrap">
+          <div class="meta">Request body</div>
+          <pre class="code-snippet">${esc(e.request_body)}</pre>
+        </div></td>
+      </tr>`;
+    }
+    return html;
   }).join('');
 }
 

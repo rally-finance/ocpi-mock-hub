@@ -19,7 +19,7 @@ func main() {
 		log.Fatalf("failed to initialize app: %v", err)
 	}
 	if !cfg.UseRedis() && (os.Getenv("VERCEL") != "" || os.Getenv("VERCEL_ENV") != "") {
-		log.Printf("[warning] REDIS_URL is not configured; request logs, OCPI correctness sessions, and mutable hub state remain per-instance on Vercel")
+		log.Printf("[warning] FREE_TIER_REDIS_URL is not configured; request logs, OCPI correctness sessions, and mutable hub state remain per-instance on Vercel")
 	}
 	router := hub.NewRouter(app)
 	simulation.SetHTTPClient(correctness.NewHTTPClient(app.Correctness, nil))

@@ -15,7 +15,7 @@ type PartyState struct {
 
 // Store abstracts state persistence with two backends:
 // - MemoryStore for standalone/local dev
-// - RedisStore for deployed environments (requires REDIS_URL)
+// - RedisStore for deployed environments (requires FREE_TIER_REDIS_URL)
 type Store interface {
 	// Generic blobs for shared multi-instance state.
 	GetBlob(key string) ([]byte, error)

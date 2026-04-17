@@ -20,7 +20,7 @@ type RedisStore struct {
 func NewRedisStore(redisURL string) (*RedisStore, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+		return nil, fmt.Errorf("parse FREE_TIER_REDIS_URL: %w", err)
 	}
 	rdb := redis.NewClient(opts)
 

@@ -255,20 +255,32 @@ func RequestLogMiddleware(rl *RequestLog) func(http.Handler) http.Handler {
 			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
 				originalBody := r.Body
 				limited := io.LimitReader(originalBody, maxRequestBodyLogBytes+1)
-				if bodyBytes, err := io.ReadAll(limited); err == nil {
-					if len(bodyBytes) > maxRequestBodyLogBytes {
-						requestBody = string(bodyBytes[:maxRequestBodyLogBytes]) + requestBodyTruncatedTag
-						r.Body = struct {
-							io.Reader
-							io.Closer
-						}{
-							Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
-							Closer: originalBody,
-						}
-					} else {
-						requestBody = string(bodyBytes)
-						r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				bodyBytes, err := io.ReadAll(limited)
+				switch {
+				case err != nil:
+					// ReadAll may have consumed part of originalBody before failing;
+					// splice the already-consumed bytes back in front of the remaining
+					// stream so the downstream handler sees the same bytes (and any
+					// subsequent read error) it would have without this middleware.
+					r.Body = struct {
+						io.Reader
+						io.Closer
+					}{
+						Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
+						Closer: originalBody,
 					}
+				case len(bodyBytes) > maxRequestBodyLogBytes:
+					requestBody = string(bodyBytes[:maxRequestBodyLogBytes]) + requestBodyTruncatedTag
+					r.Body = struct {
+						io.Reader
+						io.Closer
+					}{
+						Reader: io.MultiReader(bytes.NewReader(bodyBytes), originalBody),
+						Closer: originalBody,
+					}
+				default:
+					requestBody = string(bodyBytes)
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 				}
 			}
 

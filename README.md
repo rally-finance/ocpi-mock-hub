@@ -61,7 +61,7 @@ In standalone mode, a background ticker handles this. On Vercel, a cron job (`/a
 | `EMSP_CALLBACK_URL` | `http://localhost:3000/api/ocpi` | eMSP callback URL |
 | `MOCK_SEED_LOCATIONS` | `50` | Number of fake locations |
 | `MOCK_MODE` | `happy` | Simulation mode |
-| `REDIS_URL` | — | Redis connection URL (enables persistent store) |
+| `FREE_TIER_REDIS_URL` | — | Redis connection URL (enables persistent store) |
 
 ## Simulation Modes
 
@@ -183,7 +183,7 @@ Navigate to `/admin/` for a built-in dashboard with:
 
 ## Deploying to Vercel
 
-The project includes `vercel.json` with rewrites and cron configuration. Connect the repo to Vercel and add a Redis store — the `REDIS_URL` env var will be injected automatically.
+The project includes `vercel.json` with rewrites and cron configuration. Connect the repo to Vercel and add a Redis store — the `FREE_TIER_REDIS_URL` env var will be injected automatically.
 
 ## Fake CPO Parties
 

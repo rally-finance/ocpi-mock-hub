@@ -14,8 +14,8 @@ type MemoryStore struct {
 	emspCreds        []byte
 	emspOwnToken     string
 	emspVersionsURL  string
-	parties          map[string][]byte // key: "CC/PID" -> JSON
-	tokenBIndex      map[string]string // tokenB -> party key
+	parties          map[string][]byte            // key: "CC/PID" -> JSON
+	tokenBIndex      map[string]map[string]bool   // tokenB -> set of party keys (multi-party connections share one token)
 	tokens           map[string][]byte // key: "cc/pid/uid"
 	sessions         map[string][]byte // key: session ID
 	cdrs             map[string][]byte // key: CDR ID
@@ -28,7 +28,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		blobs:            make(map[string][]byte),
 		parties:          make(map[string][]byte),
-		tokenBIndex:      make(map[string]string),
+		tokenBIndex:      make(map[string]map[string]bool),
 		tokens:           make(map[string][]byte),
 		sessions:         make(map[string][]byte),
 		cdrs:             make(map[string][]byte),
@@ -143,13 +143,14 @@ func (m *MemoryStore) SetEMSPVersionsURL(url string) error {
 func (m *MemoryStore) PutParty(key string, state []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Remove old tokenB index entry
+	// Unbind the key from its previous TokenB, if any. Other roles that share
+	// the same TokenB on a multi-party connection stay indexed.
 	if old, ok := m.parties[key]; ok {
 		var prev struct {
 			TokenB string `json:"token_b"`
 		}
 		if json.Unmarshal(old, &prev) == nil && prev.TokenB != "" {
-			delete(m.tokenBIndex, prev.TokenB)
+			m.unbindTokenBLocked(prev.TokenB, key)
 		}
 	}
 	m.parties[key] = state
@@ -157,7 +158,12 @@ func (m *MemoryStore) PutParty(key string, state []byte) error {
 		TokenB string `json:"token_b"`
 	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
-		m.tokenBIndex[p.TokenB] = key
+		set, ok := m.tokenBIndex[p.TokenB]
+		if !ok {
+			set = make(map[string]bool)
+			m.tokenBIndex[p.TokenB] = set
+		}
+		set[key] = true
 	}
 	return nil
 }
@@ -168,14 +174,24 @@ func (m *MemoryStore) GetParty(key string) ([]byte, error) {
 	return m.parties[key], nil
 }
 
+// GetPartyByTokenB returns one party whose TokenB matches. In a multi-party
+// setup where several parties share a TokenB, any one of them answers the
+// "is this token valid" question; callers that need party-level context must
+// still disambiguate via OCPI-To-Country-Code / OCPI-To-Party-Id headers or
+// URL path parameters.
 func (m *MemoryStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	key, ok := m.tokenBIndex[tokenB]
-	if !ok {
+	set, ok := m.tokenBIndex[tokenB]
+	if !ok || len(set) == 0 {
 		return nil, nil
 	}
-	return m.parties[key], nil
+	for key := range set {
+		if party, ok := m.parties[key]; ok {
+			return party, nil
+		}
+	}
+	return nil, nil
 }
 
 func (m *MemoryStore) DeleteParty(key string) error {
@@ -186,11 +202,25 @@ func (m *MemoryStore) DeleteParty(key string) error {
 			TokenB string `json:"token_b"`
 		}
 		if json.Unmarshal(old, &p) == nil && p.TokenB != "" {
-			delete(m.tokenBIndex, p.TokenB)
+			m.unbindTokenBLocked(p.TokenB, key)
 		}
 	}
 	delete(m.parties, key)
 	return nil
+}
+
+// unbindTokenBLocked removes one party key from the TokenB index. Must be
+// called with m.mu held. The TokenB entry is dropped entirely once the last
+// party referencing it is gone.
+func (m *MemoryStore) unbindTokenBLocked(tokenB, partyKey string) {
+	set, ok := m.tokenBIndex[tokenB]
+	if !ok {
+		return
+	}
+	delete(set, partyKey)
+	if len(set) == 0 {
+		delete(m.tokenBIndex, tokenB)
+	}
 }
 
 func (m *MemoryStore) ListParties() ([][]byte, error) {

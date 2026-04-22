@@ -135,6 +135,11 @@ func (h *Handler) InitiateHandshake(w http.ResponseWriter, r *http.Request) {
 	rawCreds, _ := json.Marshal(emspCreds.Data)
 	h.Store.SetEMSPCredentials(rawCreds)
 
+	// Register every role the eMSP advertises so admin/auth have parity with
+	// the inbound-registration flow. All roles share the hub-issued TokenB
+	// because eMSP-side callers will use that token when calling back.
+	persistCredentialRoles(h.Store, emspCreds.Data, tokenB, rawCreds)
+
 	writeJSON(w, http.StatusOK, initiateHandshakeResult{
 		Success:     true,
 		TokenB:      tokenB,

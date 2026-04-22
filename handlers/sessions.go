@@ -129,6 +129,19 @@ func (h *Handler) PatchReceiverSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetSessionByID(w http.ResponseWriter, r *http.Request) {
+	h.getSessionByPartyKey(w, r)
+}
+
+// GetReceiverSession mirrors GetSessionByID for the receiver URL so a pushing
+// party can verify the state the hub currently holds for a session. OCPI
+// 2.2.1 §7.2.1 does not mandate a receiver-side GET, but exposing one makes
+// the mock testable end-to-end: after PUT/PATCH the client can read back.
+// The party-match enforcement is identical to the sender-side GET.
+func (h *Handler) GetReceiverSession(w http.ResponseWriter, r *http.Request) {
+	h.getSessionByPartyKey(w, r)
+}
+
+func (h *Handler) getSessionByPartyKey(w http.ResponseWriter, r *http.Request) {
 	store := h.storeForRequest(r)
 	countryCode := strings.ToUpper(chi.URLParam(r, "countryCode"))
 	partyID := strings.ToUpper(chi.URLParam(r, "partyID"))

@@ -142,19 +142,22 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 | POST | `/ocpi/2.2.1/receiver/commands/{command}` | Token B | Send a command |
 | PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/replace a session |
 | PATCH | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Merge partial session update; `charging_periods` appends |
+| GET | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Diagnostic read of the receiver-stored session (party-match enforced) |
 | POST | `/ocpi/2.2.1/receiver/cdrs` | Token B | Push a CDR (returns `Location` header) |
 | GET | `/ocpi/2.2.1/receiver/cdrs/{cdrID}` | Token B | Get a received CDR |
-| PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Set charging profile for a session |
-| GET | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Get active charging profile |
-| DELETE | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Clear charging profile |
+| PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | `SetChargingProfile`; sync `ChargingProfileResponse`, async `ChargingProfileResult` to `response_url` |
+| GET | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}?duration=&response_url=` | Token B | Sync `ChargingProfileResponse`, async `ActiveChargingProfileResult` to `response_url` |
+| DELETE | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}?response_url=` | Token B | `ClearChargingProfile`; sync `ChargingProfileResponse`, async `ClearProfileResult` to `response_url` |
 
 All sender list endpoints support `date_from`/`date_to` query parameters, `offset`/`limit` paging, and `OCPI-To-Country-Code`/`OCPI-To-Party-Id` header filtering.
 
 ## Multi-Party Support
 
-The hub supports multiple eMSPs connected simultaneously. Each party gets its own Token B, callback URL, and credentials record keyed by `{country_code}/{party_id}`. The auth middleware resolves incoming Token B values to the correct party.
+The hub supports multiple eMSPs connected simultaneously and OCPI 2.2.1 multi-role credentials on a single connection.
 
-Use the admin-initiated handshake flow or standard `POST /credentials` from different eMSPs to register multiple parties.
+- **Separate connections.** Each connected eMSP gets its own Token B and credentials record keyed by `{country_code}/{party_id}`. The auth middleware resolves inbound traffic to any registered party.
+- **Multi-role credentials (§8.4.3).** A single `POST /credentials` (or admin-initiated handshake) may advertise several `roles[]` entries — for example one eMSP fronting two country/party-id pairs. The hub persists a `PartyState` per role sharing the connection's Token B; every role is listed via `ListParties` and the admin UI, and auth by Token B resolves to any of them. Deleting one role no longer invalidates the Token B binding for the siblings that remain on the connection.
+- The standard `POST /credentials` handshake (inbound) and the admin `initiate-handshake` flow (outbound) both go through the same multi-role persistence path, so the hub's view of connected parties is consistent regardless of who drove the exchange.
 
 ## Charging Preferences
 
@@ -174,21 +177,65 @@ request body:
 
 ## Charging Profiles
 
-The `ChargingProfiles` receiver module lets an eMSP set power limits on active sessions:
+The `ChargingProfiles` receiver module lets an eMSP set, inspect, and clear
+power limits on active sessions. All three verbs follow OCPI 2.2.1's
+request/response + async callback pattern:
 
-- **PUT** stores the profile and sends an async `ActiveChargingProfileResult` callback
-- **GET** returns the stored profile or a default `ActiveChargingProfile`
-- **DELETE** clears the profile (async `ClearProfileResult` callback planned)
-- The simulation lifecycle respects `min_charging_rate` from active profiles to cap kWh growth
+- The sync HTTP response body is always a `ChargingProfileResponse`
+  (`{"result": "<ChargingProfileResponseType>", "timeout": <seconds>}`).
+  `result` is one of `ACCEPTED`, `NOT_SUPPORTED`, `REJECTED`, `TOO_OFTEN`, or
+  `UNKNOWN_SESSION`. `timeout` tells the eMSP how long to wait before assuming
+  the async callback will never arrive (the mock advertises 30s).
+- After the sync response the hub POSTs a follow-up to the eMSP's
+  `response_url`:
+  - **PUT** (`SetChargingProfile`) → `ChargingProfileResult` `{result}`
+    (`ACCEPTED` / `REJECTED` / `UNKNOWN`).
+  - **GET** → `ActiveChargingProfileResult` `{result, profile}` where `profile`
+    is an `ActiveChargingProfile` with `start_date_time` and `charging_profile`
+    (either the stored profile or a synthesized empty-profile fallback).
+  - **DELETE** (`ClearChargingProfile`) → `ClearProfileResult` `{result}`.
+    `ACCEPTED` when a profile existed and was cleared, `UNKNOWN` when there was
+    nothing to clear.
+- For all three verbs a missing session returns a sync `UNKNOWN_SESSION` result
+  with envelope `status_code=1000` (per spec this is a domain outcome, not an
+  OCPI error) and skips the async callback. A missing `response_url` returns
+  HTTP 400 with OCPI `2003` (`invalid parameters`).
+- `POST /admin/push-active-profile` triggers an unsolicited
+  `ActiveChargingProfile` PUT to a caller-provided `target_url`, simulating the
+  CPO-side behavior when an EVSE notifies the hub that the active profile has
+  changed outside of a request/response cycle.
+- The simulation lifecycle still respects `min_charging_rate` from stored
+  profiles when capping kWh growth.
+
+## Credit CDRs
+
+Per OCPI 2.2.1 §9.2.3.3 a credit CDR reverses a previously sent one by setting
+`credit=true` and `credit_reference_id` to the original CDR's id. The hub
+exposes an admin-driven helper so mock consumers can exercise the reconciliation
+path without hand-crafting the payload:
+
+- `POST /admin/credit-cdr` body `{"cdr_id": "CDR-xyz", "push": true}` looks up the
+  original CDR, clones it, generates a fresh `CDR-CREDIT-…` id, negates every
+  monetary total (`total_cost`, `total_fixed_cost`, `total_energy_cost`,
+  `total_time_cost`, `total_parking_cost`, `total_reservation_cost`) and
+  `total_energy`, bumps `last_updated`, and stores the credit CDR alongside the
+  original.
+- When `push` is `true` (the default) the credit CDR is also POSTed to the
+  connected eMSP's `receiver/cdrs` endpoint using the stored callback URL and
+  Token C. Push failures return `{"push_error": "..."}` but the credit CDR is
+  still persisted locally so retries or offline reconciliation are possible.
 
 ## Data Model Enrichment
 
 Generated OCPI objects include spec-realistic detail:
 
-- **Locations** — `facilities`, `opening_times`, `charging_when_closed`, `energy_mix`
-- **Tariffs** — `tariff_alt_text`, `min_price`/`max_price`, `restrictions` on elements
-- **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions
-- **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `remark`
+- **Locations** — `state`, `related_locations` (additional geo-coordinates), `directions`, `operator`/`suboperator`/`owner` as full `BusinessDetails` objects with optional `website` and `logo`, `facilities`, `opening_times`, `charging_when_closed`, `images`, `energy_mix`. The `publish_allowed_to` list (`PublishTokenType`) is available on the type for private locations.
+- **EVSEs** — `status_schedule` (planned maintenance windows), `floor_level`, `physical_reference` (bay numbers), `directions`, `parking_restrictions`, `images`. Coverage is partial by design so clients see both populated and omitted optional fields in one corpus.
+- **Connectors** — `terms_and_conditions` URL in addition to the existing power, amperage, voltage, and tariff identifiers.
+- **Tariffs** — full OCPI 2.2.1 object: all five `TariffType` enum values (REGULAR, AD_HOC_PAYMENT, PROFILE_CHEAP, PROFILE_FAST, PROFILE_GREEN), all four `PriceComponent` types (ENERGY, FLAT, TIME, PARKING_TIME), `tariff_alt_text` (multi-lingual), `tariff_alt_url`, `min_price`/`max_price`, `start_date_time`/`end_date_time` validity windows, `energy_mix`, and every `TariffRestrictions` field (`start_time`/`end_time`, `start_date`/`end_date`, `min_kwh`/`max_kwh`, `min_current`/`max_current`, `min_power`/`max_power`, `min_duration`/`max_duration`, `day_of_week`, `reservation` including `RESERVATION_EXPIRES`). Seven tariffs per CPO cover the full matrix.
+- **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions.
+- **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `total_reservation_cost`, `remark`, `meter_id` and `authorization_reference` propagated from the originating session, `invoice_reference_id`, `home_charging_compensation`, `tariffs[]` (matching the CPO/currency of the session), and a representative `signed_data` block (OCMF encoding). `credit` is always emitted (`false` on freshly generated CDRs; `true` on credit CDRs issued via `POST /admin/credit-cdr`).
+- **Tokens** — the receiver PUT/PATCH flow preserves OCPI 2.2.1 optional fields (`visual_number`, `issuer`, `group_id`, `language`, `default_profile_type`, `energy_contract`) on storage; they round-trip untouched on subsequent GETs.
 
 ## Admin UI
 

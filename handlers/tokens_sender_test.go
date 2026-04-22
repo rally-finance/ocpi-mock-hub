@@ -54,9 +54,13 @@ type testStore struct {
 	reservations     map[string][]byte
 	chargingProfiles map[string][]byte
 	parties          map[string][]byte
-	tokenBIndex      map[string]string
-	mode             string
-	putSessionErr    error
+	// tokenBIndex maps a TokenB to the set of party keys authenticated under
+	// it. Mirrors the production MemoryStore semantics so tests exercise the
+	// Stage 7 invariant: a single TokenB can back several party contexts,
+	// and removing one party must not invalidate the binding for siblings.
+	tokenBIndex   map[string]map[string]bool
+	mode          string
+	putSessionErr error
 }
 
 func newTestStore() *testStore {
@@ -67,7 +71,7 @@ func newTestStore() *testStore {
 		reservations:     make(map[string][]byte),
 		chargingProfiles: make(map[string][]byte),
 		parties:          make(map[string][]byte),
-		tokenBIndex:      make(map[string]string),
+		tokenBIndex:      make(map[string]map[string]bool),
 		mode:             "happy",
 	}
 }
@@ -146,22 +150,42 @@ func (s *testStore) DeleteChargingProfile(sessionID string) error {
 	return nil
 }
 func (s *testStore) PutParty(key string, state []byte) error {
+	// Unbind the key from its previous TokenB (if any) before reindexing,
+	// leaving siblings on the same token untouched.
+	if old, ok := s.parties[key]; ok {
+		var prev struct {
+			TokenB string `json:"token_b"`
+		}
+		if json.Unmarshal(old, &prev) == nil && prev.TokenB != "" {
+			s.unbindTokenB(prev.TokenB, key)
+		}
+	}
 	s.parties[key] = state
 	var p struct {
 		TokenB string `json:"token_b"`
 	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
-		s.tokenBIndex[p.TokenB] = key
+		set, ok := s.tokenBIndex[p.TokenB]
+		if !ok {
+			set = make(map[string]bool)
+			s.tokenBIndex[p.TokenB] = set
+		}
+		set[key] = true
 	}
 	return nil
 }
 func (s *testStore) GetParty(key string) ([]byte, error) { return s.parties[key], nil }
 func (s *testStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
-	key, ok := s.tokenBIndex[tokenB]
-	if !ok {
+	set, ok := s.tokenBIndex[tokenB]
+	if !ok || len(set) == 0 {
 		return nil, nil
 	}
-	return s.parties[key], nil
+	for key := range set {
+		if party, ok := s.parties[key]; ok {
+			return party, nil
+		}
+	}
+	return nil, nil
 }
 func (s *testStore) DeleteParty(key string) error {
 	if raw, ok := s.parties[key]; ok {
@@ -169,11 +193,21 @@ func (s *testStore) DeleteParty(key string) error {
 			TokenB string `json:"token_b"`
 		}
 		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
-			delete(s.tokenBIndex, p.TokenB)
+			s.unbindTokenB(p.TokenB, key)
 		}
 	}
 	delete(s.parties, key)
 	return nil
+}
+func (s *testStore) unbindTokenB(tokenB, partyKey string) {
+	set, ok := s.tokenBIndex[tokenB]
+	if !ok {
+		return
+	}
+	delete(set, partyKey)
+	if len(set) == 0 {
+		delete(s.tokenBIndex, tokenB)
+	}
 }
 func (s *testStore) ListParties() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.parties))
@@ -353,6 +387,62 @@ func TestPutToken_InjectsIdentifiersAndType(t *testing.T) {
 	json.Unmarshal(raw, &stored)
 	if stored["country_code"] != "DE" || stored["party_id"] != "AAA" || stored["uid"] != "TOK1" || stored["type"] != "RFID" {
 		t.Errorf("expected identifiers and RFID type injected, got %v", stored)
+	}
+}
+
+// TestPutToken_PreservesOCPI221OptionalFields ensures the receiver PUT flow
+// round-trips the OCPI 2.2.1 optional Token fields (visual_number, issuer,
+// group_id, language, default_profile_type, energy_contract) untouched.
+// These fields are not required by the mock's own logic, but clients must be
+// able to push them through without loss.
+func TestPutToken_PreservesOCPI221OptionalFields(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	body := `{
+		"last_updated":"2026-01-01T00:00:00Z",
+		"whitelist":"ALLOWED",
+		"valid":true,
+		"contract_id":"NL-TNM-C012345678-X",
+		"issuer":"TheNewMotion",
+		"visual_number":"DF000-2001-8999-1",
+		"group_id":"DF000-2001-8999",
+		"language":"en",
+		"default_profile_type":"GREEN",
+		"energy_contract":{"supplier_name":"GreenEnergy","contract_id":"GE-2026-0001"}
+	}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK-OPT", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK-OPT"})
+
+	h.PutToken(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	raw, _ := store.GetToken("DE", "AAA", "TOK-OPT")
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal stored token: %v", err)
+	}
+
+	for _, key := range []string{
+		"visual_number", "issuer", "group_id", "language",
+		"default_profile_type", "energy_contract",
+	} {
+		if _, ok := stored[key]; !ok {
+			t.Errorf("expected optional field %q to round-trip, got %v", key, stored)
+		}
+	}
+	if stored["visual_number"] != "DF000-2001-8999-1" {
+		t.Errorf("visual_number mismatch: %v", stored["visual_number"])
+	}
+	ec, ok := stored["energy_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("energy_contract not an object: %v", stored["energy_contract"])
+	}
+	if ec["supplier_name"] != "GreenEnergy" || ec["contract_id"] != "GE-2026-0001" {
+		t.Errorf("energy_contract contents altered: %v", ec)
 	}
 }
 

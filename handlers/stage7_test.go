@@ -206,6 +206,45 @@ func TestIssueCreditCDR_RepeatDoesNotOverwrite(t *testing.T) {
 	}
 }
 
+func TestBuildCreditCDR_DeepCopiesNestedObjects(t *testing.T) {
+	// Bugbot regression: nested OCPI objects used to be shared references
+	// between original and credit after a shallow map copy. Mutating the
+	// credit's nested fields must never leak back into the source CDR.
+	originalToken := map[string]any{"uid": "TOK-ORIG", "type": "RFID"}
+	periods := []any{
+		map[string]any{"start_date_time": "2026-01-01T00:00:00Z", "dimensions": []any{}},
+	}
+	original := map[string]any{
+		"id":               "CDR-DEEP-1",
+		"country_code":     "DE",
+		"party_id":         "AAA",
+		"cdr_token":        originalToken,
+		"charging_periods": periods,
+	}
+
+	credit := buildCreditCDR(original, "CDR-DEEP-1")
+
+	creditToken, _ := credit["cdr_token"].(map[string]any)
+	if creditToken == nil {
+		t.Fatal("cdr_token missing from credit")
+	}
+	creditToken["uid"] = "TOK-MUTATED"
+	if originalToken["uid"] != "TOK-ORIG" {
+		t.Errorf("mutation of credit.cdr_token leaked into original: %v", originalToken["uid"])
+	}
+
+	creditPeriods, _ := credit["charging_periods"].([]any)
+	if len(creditPeriods) > 0 {
+		if m, ok := creditPeriods[0].(map[string]any); ok {
+			m["start_date_time"] = "2099-12-31T23:59:59Z"
+		}
+	}
+	origFirst := periods[0].(map[string]any)
+	if origFirst["start_date_time"] != "2026-01-01T00:00:00Z" {
+		t.Errorf("mutation of credit.charging_periods leaked into original: %v", origFirst["start_date_time"])
+	}
+}
+
 func TestBuildCreditCDR_PreservesIdentity(t *testing.T) {
 	original := map[string]any{
 		"id":           "CDR-1",

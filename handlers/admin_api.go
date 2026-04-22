@@ -389,9 +389,17 @@ func (h *Handler) IssueCreditCDR(w http.ResponseWriter, r *http.Request) {
 // same original CDR twice — so repeat credits are each stored and delivered
 // independently rather than clobbering prior credit CDRs.
 func buildCreditCDR(original map[string]any, originalID string) map[string]any {
+	// Deep-copy via JSON round-trip so nested OCPI structures (cdr_token,
+	// cdr_location, charging_periods, tariffs…) are not shared references
+	// with the caller's map. A shallow copy would silently let mutations on
+	// the credit CDR bleed back into the original.
 	credit := make(map[string]any, len(original)+2)
-	for k, v := range original {
-		credit[k] = v
+	if encoded, err := json.Marshal(original); err == nil {
+		_ = json.Unmarshal(encoded, &credit)
+	} else {
+		for k, v := range original {
+			credit[k] = v
+		}
 	}
 
 	// Human-readable prefix that traces back to the original id, suffixed with

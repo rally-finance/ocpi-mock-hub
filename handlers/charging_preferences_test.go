@@ -99,6 +99,26 @@ func TestPutChargingPreferences_AcceptedRegular(t *testing.T) {
 	}
 }
 
+func TestPutChargingPreferences_NormalizesProfileTypeOnStore(t *testing.T) {
+	h := chargingPrefsHandler(t)
+
+	w := putChargingPreferences(h, "SESS-1", `{"profile_type":"cheap","departure_time":"2026-01-01T10:00:00Z","energy_need":5}`)
+	if got := decodePreferencesResult(t, w); got != chargingPreferencesAccepted {
+		t.Fatalf("expected ACCEPTED, got %s", got)
+	}
+
+	raw, _ := h.Store.GetSession("SESS-1")
+	var session map[string]any
+	json.Unmarshal(raw, &session)
+	prefs, ok := session["charging_preferences"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected charging_preferences persisted, got %v", session["charging_preferences"])
+	}
+	if prefs["profile_type"] != "CHEAP" {
+		t.Errorf("expected profile_type normalized to CHEAP on store, got %v", prefs["profile_type"])
+	}
+}
+
 func TestPutChargingPreferences_CheapRequiresDepartureThenEnergy(t *testing.T) {
 	h := chargingPrefsHandler(t)
 

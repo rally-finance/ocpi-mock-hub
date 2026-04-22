@@ -144,9 +144,9 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 | PATCH | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Merge partial session update; `charging_periods` appends |
 | POST | `/ocpi/2.2.1/receiver/cdrs` | Token B | Push a CDR (returns `Location` header) |
 | GET | `/ocpi/2.2.1/receiver/cdrs/{cdrID}` | Token B | Get a received CDR |
-| PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Set charging profile for a session |
-| GET | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Get active charging profile |
-| DELETE | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Clear charging profile |
+| PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | `SetChargingProfile`; sync `ChargingProfileResponse`, async `ChargingProfileResult` to `response_url` |
+| GET | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}?duration=&response_url=` | Token B | Sync `ChargingProfileResponse`, async `ActiveChargingProfileResult` to `response_url` |
+| DELETE | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}?response_url=` | Token B | `ClearChargingProfile`; sync `ChargingProfileResponse`, async `ClearProfileResult` to `response_url` |
 
 All sender list endpoints support `date_from`/`date_to` query parameters, `offset`/`limit` paging, and `OCPI-To-Country-Code`/`OCPI-To-Party-Id` header filtering.
 
@@ -174,12 +174,35 @@ request body:
 
 ## Charging Profiles
 
-The `ChargingProfiles` receiver module lets an eMSP set power limits on active sessions:
+The `ChargingProfiles` receiver module lets an eMSP set, inspect, and clear
+power limits on active sessions. All three verbs follow OCPI 2.2.1's
+request/response + async callback pattern:
 
-- **PUT** stores the profile and sends an async `ActiveChargingProfileResult` callback
-- **GET** returns the stored profile or a default `ActiveChargingProfile`
-- **DELETE** clears the profile (async `ClearProfileResult` callback planned)
-- The simulation lifecycle respects `min_charging_rate` from active profiles to cap kWh growth
+- The sync HTTP response body is always a `ChargingProfileResponse`
+  (`{"result": "<ChargingProfileResponseType>", "timeout": <seconds>}`).
+  `result` is one of `ACCEPTED`, `NOT_SUPPORTED`, `REJECTED`, `TOO_OFTEN`, or
+  `UNKNOWN_SESSION`. `timeout` tells the eMSP how long to wait before assuming
+  the async callback will never arrive (the mock advertises 30s).
+- After the sync response the hub POSTs a follow-up to the eMSP's
+  `response_url`:
+  - **PUT** (`SetChargingProfile`) → `ChargingProfileResult` `{result}`
+    (`ACCEPTED` / `REJECTED` / `UNKNOWN`).
+  - **GET** → `ActiveChargingProfileResult` `{result, profile}` where `profile`
+    is an `ActiveChargingProfile` with `start_date_time` and `charging_profile`
+    (either the stored profile or a synthesized empty-profile fallback).
+  - **DELETE** (`ClearChargingProfile`) → `ClearProfileResult` `{result}`.
+    `ACCEPTED` when a profile existed and was cleared, `UNKNOWN` when there was
+    nothing to clear.
+- For all three verbs a missing session returns a sync `UNKNOWN_SESSION` result
+  with envelope `status_code=1000` (per spec this is a domain outcome, not an
+  OCPI error) and skips the async callback. A missing `response_url` returns
+  HTTP 400 with OCPI `2003` (`invalid parameters`).
+- `POST /admin/push-active-profile` triggers an unsolicited
+  `ActiveChargingProfile` PUT to a caller-provided `target_url`, simulating the
+  CPO-side behavior when an EVSE notifies the hub that the active profile has
+  changed outside of a request/response cycle.
+- The simulation lifecycle still respects `min_charging_rate` from stored
+  profiles when capping kWh growth.
 
 ## Data Model Enrichment
 

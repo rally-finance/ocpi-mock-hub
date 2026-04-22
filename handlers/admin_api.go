@@ -248,6 +248,48 @@ func (h *Handler) PushTariffs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+// PushActiveProfile triggers an unsolicited ActiveChargingProfile PUT to an
+// eMSP's sender chargingprofiles endpoint. This mirrors the CPO-side behavior
+// in OCPI 2.2.1 mod_charging_profiles where the Receiver SHALL post an update
+// when a local input influences the ActiveChargingProfile for an ongoing session.
+//
+// Request body: {"session_id": "...", "target_url": "https://..."}
+// target_url is the full eMSP sender URL ({base}/chargingprofiles/{session_id}).
+func (h *Handler) PushActiveProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string          `json:"session_id"`
+		TargetURL string          `json:"target_url"`
+		Profile   json.RawMessage `json:"profile,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if req.TargetURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_url is required"})
+		return
+	}
+
+	// If a session is provided and we already have a profile stored for it,
+	// use that as the body so the push reflects current state.
+	profile := req.Profile
+	if len(profile) == 0 && req.SessionID != "" {
+		if stored, _ := h.Store.GetChargingProfile(req.SessionID); len(stored) > 0 {
+			profile = stored
+		}
+	}
+
+	if err := h.PushActiveChargingProfile(r.Context(), h.Store, req.TargetURL, profile); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "pushed",
+		"session_id": req.SessionID,
+		"target_url": req.TargetURL,
+	})
+}
+
 func (h *Handler) resolveEMSPPushTarget() (authToken, emspURL string, err error) {
 	tokenB, _ := h.Store.GetTokenB()
 	if tokenB == "" {

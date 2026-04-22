@@ -99,6 +99,7 @@ func NewRouter(app *App) http.Handler {
 	r.Post("/admin/trigger-tick", h.TriggerTick)
 	r.Post("/admin/push-locations", h.PushLocations)
 	r.Post("/admin/push-tariffs", h.PushTariffs)
+	r.Post("/admin/push-active-profile", h.PushActiveProfile)
 	r.Get("/admin/tokens", h.GetAdminTokens)
 	r.Get("/admin/reservations", h.GetAdminReservations)
 	r.Post("/admin/authorize", h.AdminAuthorize)

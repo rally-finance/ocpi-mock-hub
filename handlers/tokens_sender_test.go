@@ -327,6 +327,151 @@ func TestPostTokenAuthorize_NotAllowed(t *testing.T) {
 	}
 }
 
+func TestPutToken_InjectsIdentifiersAndType(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	body := `{"last_updated":"2026-01-01T00:00:00Z","whitelist":"ALWAYS"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PutToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	raw, _ := store.GetToken("DE", "AAA", "TOK1")
+	var stored map[string]any
+	json.Unmarshal(raw, &stored)
+	if stored["country_code"] != "DE" || stored["party_id"] != "AAA" || stored["uid"] != "TOK1" || stored["type"] != "RFID" {
+		t.Errorf("expected identifiers and RFID type injected, got %v", stored)
+	}
+}
+
+func TestPutToken_SeparateStorageForAppUserType(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	rfidBody := `{"last_updated":"2026-01-01T00:00:00Z","type":"RFID"}`
+	appBody := `{"last_updated":"2026-01-01T00:00:00Z","type":"APP_USER"}`
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", strings.NewReader(rfidBody))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+	h.PutToken(w, r)
+
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1?type=APP_USER", strings.NewReader(appBody))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+	h.PutToken(w, r)
+
+	rfid, _ := store.GetToken("DE", "AAA", "TOK1")
+	if rfid == nil {
+		t.Fatal("expected RFID token to remain")
+	}
+	app, _ := store.GetToken("DE", "AAA", "TOK1|APP_USER")
+	if app == nil {
+		t.Fatal("expected APP_USER token stored under composite key")
+	}
+}
+
+func TestPatchToken_MergesIntoExisting(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	existing := map[string]any{
+		"uid":          "TOK1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"type":         "RFID",
+		"whitelist":    "ALLOWED",
+		"valid":        true,
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(existing)
+	store.PutToken("DE", "AAA", "TOK1", data)
+
+	body := `{"valid":false,"last_updated":"2026-01-01T00:05:00Z"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PatchToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	raw, _ := store.GetToken("DE", "AAA", "TOK1")
+	var merged map[string]any
+	json.Unmarshal(raw, &merged)
+	if merged["valid"] != false {
+		t.Errorf("expected valid=false, got %v", merged["valid"])
+	}
+	if merged["whitelist"] != "ALLOWED" {
+		t.Errorf("expected whitelist preserved, got %v", merged["whitelist"])
+	}
+}
+
+func TestPatchToken_UnknownReturns404(t *testing.T) {
+	h := testHandler()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/tokens/DE/AAA/MISSING", strings.NewReader(`{"last_updated":"2026-01-01T00:00:00Z"}`))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "MISSING"})
+
+	h.PatchToken(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+}
+
+func TestGetReceiverToken_Roundtrip(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	data, _ := json.Marshal(map[string]any{
+		"uid": "TOK1", "country_code": "DE", "party_id": "AAA", "type": "RFID",
+	})
+	store.PutToken("DE", "AAA", "TOK1", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.GetReceiverToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+}
+
+func TestPostTokenAuthorize_TypeQueryRoutesToAppUserToken(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	data, _ := json.Marshal(map[string]any{"uid": "TOK1", "type": "APP_USER"})
+	store.PutToken("DE", "AAA", "TOK1|APP_USER", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/authorize?type=APP_USER", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PostTokenAuthorize(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var result map[string]any
+	json.Unmarshal(resp.Data, &result)
+	if result["allowed"] != "ALLOWED" {
+		t.Errorf("expected ALLOWED, got %v", result["allowed"])
+	}
+}
+
 func TestPostTokenAuthorize_WhitelistNeverRequiresLocationReferences(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

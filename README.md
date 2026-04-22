@@ -135,9 +135,12 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/update a token |
+| PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/replace a token (`?type=` selects TokenType, default `RFID`) |
+| PATCH | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Merge partial token update (requires `last_updated`) |
+| GET | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Read back the stored token (eMSP validation) |
 | POST | `/ocpi/2.2.1/receiver/commands/{command}` | Token B | Send a command |
-| PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/update a session |
+| PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/replace a session |
+| PATCH | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Merge partial session update; `charging_periods` appends |
 | POST | `/ocpi/2.2.1/receiver/cdrs` | Token B | Push a CDR (returns `Location` header) |
 | GET | `/ocpi/2.2.1/receiver/cdrs/{cdrID}` | Token B | Get a received CDR |
 | PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Set charging profile for a session |

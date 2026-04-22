@@ -69,8 +69,11 @@ func NewRouter(app *App) http.Handler {
 
 	// OCPI receiver modules (eMSP pushes data to hub)
 	r.Put("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.PutToken)
+	r.Patch("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.PatchToken)
+	r.Get("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.GetReceiverToken)
 	r.Post("/ocpi/2.2.1/receiver/commands/{command}", h.PostCommand)
 	r.Put("/ocpi/2.2.1/receiver/sessions/{countryCode}/{partyID}/{sessionID}", h.PutReceiverSession)
+	r.Patch("/ocpi/2.2.1/receiver/sessions/{countryCode}/{partyID}/{sessionID}", h.PatchReceiverSession)
 	r.Post("/ocpi/2.2.1/receiver/cdrs", h.PostReceiverCDR)
 	r.Get("/ocpi/2.2.1/receiver/cdrs/{cdrID}", h.GetReceiverCDR)
 	r.Put("/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}", h.PutChargingProfile)

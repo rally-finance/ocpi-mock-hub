@@ -133,12 +133,14 @@ func (h *Handler) AdminAuthorize(w http.ResponseWriter, r *http.Request) {
 		CountryCode string `json:"country_code"`
 		PartyID     string `json:"party_id"`
 		UID         string `json:"uid"`
+		Type        string `json:"type,omitempty"`
 		LocationID  string `json:"location_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	storageUID := tokenStorageUID(req.UID, req.Type)
 
 	mode, _ := h.Store.GetMode()
 	if mode == "reject" {
@@ -157,7 +159,7 @@ func (h *Handler) AdminAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _ := h.Store.GetToken(req.CountryCode, req.PartyID, req.UID)
+	raw, _ := h.Store.GetToken(req.CountryCode, req.PartyID, storageUID)
 	if raw == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"allowed": "NOT_ALLOWED",

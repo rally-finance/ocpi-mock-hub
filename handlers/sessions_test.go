@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,117 @@ func TestGetSessionByID_WrongParty(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", w.Code)
+	}
+}
+
+func TestPatchReceiverSession_MergesFields(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	session := map[string]any{
+		"id":           "SESS-1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"status":       "PENDING",
+		"kwh":          1.0,
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-1", data)
+
+	body := `{"status":"ACTIVE","kwh":2.5,"last_updated":"2026-01-01T00:05:00Z"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/sessions/DE/AAA/SESS-1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "SESS-1"})
+
+	h.PatchReceiverSession(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	raw, _ := store.GetSession("SESS-1")
+	var merged map[string]any
+	json.Unmarshal(raw, &merged)
+	if merged["status"] != "ACTIVE" {
+		t.Errorf("expected status ACTIVE, got %v", merged["status"])
+	}
+	if merged["kwh"].(float64) != 2.5 {
+		t.Errorf("expected kwh 2.5, got %v", merged["kwh"])
+	}
+	if merged["id"] != "SESS-1" {
+		t.Errorf("expected id preserved, got %v", merged["id"])
+	}
+}
+
+func TestPatchReceiverSession_AppendsChargingPeriods(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	session := map[string]any{
+		"id":           "SESS-1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"status":       "ACTIVE",
+		"charging_periods": []map[string]any{
+			{"start_date_time": "2026-01-01T00:00:00Z", "dimensions": []any{}},
+		},
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-1", data)
+
+	body := `{"charging_periods":[{"start_date_time":"2026-01-01T00:05:00Z","dimensions":[]}],"last_updated":"2026-01-01T00:05:00Z"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/sessions/DE/AAA/SESS-1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "SESS-1"})
+
+	h.PatchReceiverSession(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d", w.Code)
+	}
+	raw, _ := store.GetSession("SESS-1")
+	var merged map[string]any
+	json.Unmarshal(raw, &merged)
+	periods, ok := merged["charging_periods"].([]any)
+	if !ok || len(periods) != 2 {
+		t.Fatalf("expected charging_periods to grow to 2, got %v", merged["charging_periods"])
+	}
+}
+
+func TestPatchReceiverSession_RequiresLastUpdated(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	data, _ := json.Marshal(map[string]any{
+		"id": "SESS-1", "country_code": "DE", "party_id": "AAA",
+		"status": "ACTIVE", "last_updated": "2026-01-01T00:00:00Z",
+	})
+	store.PutSession("SESS-1", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/sessions/DE/AAA/SESS-1", strings.NewReader(`{"status":"COMPLETED"}`))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "SESS-1"})
+
+	h.PatchReceiverSession(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
+
+func TestPatchReceiverSession_NotFound(t *testing.T) {
+	h := testHandler()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/sessions/DE/AAA/UNKNOWN", strings.NewReader(`{"last_updated":"2026-01-01T00:00:00Z"}`))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "UNKNOWN"})
+
+	h.PatchReceiverSession(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
 	}
 }
 

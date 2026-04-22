@@ -51,8 +51,9 @@ func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
+	tokenType := tokenTypeFromRequest(r)
 
-	raw, err := store.GetToken(cc, pid, uid)
+	raw, err := store.GetToken(cc, pid, tokenStorageUID(uid, tokenType))
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get token")
 		return
@@ -80,6 +81,8 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
+	tokenType := tokenTypeFromRequest(r)
+	storageUID := tokenStorageUID(uid, tokenType)
 
 	body, _ := io.ReadAll(r.Body)
 	var req authorizeRequest
@@ -112,7 +115,7 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _ := store.GetToken(cc, pid, uid)
+	raw, _ := store.GetToken(cc, pid, storageUID)
 	if raw == nil {
 		ocpiutil.OK(w, r, map[string]any{
 			"allowed": "NOT_ALLOWED",

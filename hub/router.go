@@ -60,6 +60,7 @@ func NewRouter(app *App) http.Handler {
 	r.Get("/ocpi/2.2.1/sender/tariffs/{countryCode}/{partyID}/{tariffID}", h.GetTariff)
 	r.Get("/ocpi/2.2.1/sender/sessions", h.GetSessions)
 	r.Get("/ocpi/2.2.1/sender/sessions/{countryCode}/{partyID}/{sessionID}", h.GetSessionByID)
+	r.Put("/ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences", h.PutChargingPreferences)
 	r.Get("/ocpi/2.2.1/sender/cdrs", h.GetCDRs)
 	r.Get("/ocpi/2.2.1/sender/cdrs/{countryCode}/{partyID}/{cdrID}", h.GetCDRByID)
 	r.Get("/ocpi/2.2.1/sender/tokens", h.GetTokens)

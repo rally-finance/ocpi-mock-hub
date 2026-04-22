@@ -124,6 +124,7 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 | GET | `/ocpi/2.2.1/sender/tariffs/{cc}/{pid}/{tariffID}` | Token B | Get single tariff |
 | GET | `/ocpi/2.2.1/sender/sessions` | Token B | List sessions |
 | GET | `/ocpi/2.2.1/sender/sessions/{cc}/{pid}/{sessionID}` | Token B | Get single session |
+| PUT | `/ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences` | Token B | Submit ChargingPreferences for an ACTIVE session |
 | GET | `/ocpi/2.2.1/sender/cdrs` | Token B | List CDRs |
 | GET | `/ocpi/2.2.1/sender/cdrs/{cc}/{pid}/{cdrID}` | Token B | Get single CDR |
 | GET | `/ocpi/2.2.1/sender/tokens` | Token B | List tokens |
@@ -154,6 +155,22 @@ All sender list endpoints support `date_from`/`date_to` query parameters, `offse
 The hub supports multiple eMSPs connected simultaneously. Each party gets its own Token B, callback URL, and credentials record keyed by `{country_code}/{party_id}`. The auth middleware resolves incoming Token B values to the correct party.
 
 Use the admin-initiated handshake flow or standard `POST /credentials` from different eMSPs to register multiple parties.
+
+## Charging Preferences
+
+OCPI 2.2.1 adds a `ChargingPreferences` endpoint that lets an eMSP pass user
+intent (profile type, departure time, energy need, V2G allowance) for an
+active session. The mock exposes it at
+`PUT /ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences` and returns
+the full `ChargingPreferencesResponse` enum depending on session state and the
+request body:
+
+- `ACCEPTED` — stored on the session so the simulation can consume it.
+- `DEPARTURE_REQUIRED` — missing `departure_time` for `CHEAP`/`COMFORT`/`GREEN`.
+- `ENERGY_NEED_REQUIRED` — missing `energy_need` for `CHEAP`/`COMFORT`.
+- `PROFILE_TYPE_NOT_SUPPORTED` — unrecognized `profile_type`.
+- `NOT_POSSIBLE` — session is not `ACTIVE`, or the EVSE does not advertise
+  `CHARGING_PREFERENCES_CAPABLE` (roughly half of seeded EVSEs do).
 
 ## Charging Profiles
 

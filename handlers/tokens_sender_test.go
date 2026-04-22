@@ -56,6 +56,7 @@ type testStore struct {
 	parties          map[string][]byte
 	tokenBIndex      map[string]string
 	mode             string
+	putSessionErr    error
 }
 
 func newTestStore() *testStore {
@@ -95,7 +96,13 @@ func (s *testStore) ListTokens() ([][]byte, error) {
 	}
 	return r, nil
 }
-func (s *testStore) PutSession(id string, data []byte) error { s.sessions[id] = data; return nil }
+func (s *testStore) PutSession(id string, data []byte) error {
+	if s.putSessionErr != nil {
+		return s.putSessionErr
+	}
+	s.sessions[id] = data
+	return nil
+}
 func (s *testStore) GetSession(id string) ([]byte, error)    { return s.sessions[id], nil }
 func (s *testStore) ListSessions() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.sessions))

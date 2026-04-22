@@ -110,10 +110,16 @@ func (h *Handler) PutChargingPreferences(w http.ResponseWriter, r *http.Request)
 
 	// Persist accepted preferences onto the session so the simulation layer
 	// can factor them in (e.g. CHEAP could pick a cheaper tariff in Stage 4).
+	// If we can't persist, don't lie to the caller that we accepted it.
 	session["charging_preferences"] = prefs
 	merged, err := json.Marshal(session)
-	if err == nil {
-		_ = store.PutSession(sessionID, merged)
+	if err != nil {
+		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to encode session")
+		return
+	}
+	if err := store.PutSession(sessionID, merged); err != nil {
+		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to persist preferences")
+		return
 	}
 
 	ocpiutil.OK(w, r, chargingPreferencesAccepted)

@@ -109,7 +109,12 @@ func (h *Handler) PatchReceiverSession(w http.ResponseWriter, r *http.Request) {
 		target["charging_periods"] = append(existingPeriods, patchPeriods...)
 	}
 
+	// URL is authoritative for identity — a PATCH body may not rename a
+	// session or reassign ownership. Re-assert after the merge so mutating
+	// any of these silently becomes a no-op at the storage layer.
 	target["id"] = sessionID
+	target["country_code"] = countryCode
+	target["party_id"] = partyID
 
 	merged, err := json.Marshal(target)
 	if err != nil {

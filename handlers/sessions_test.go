@@ -150,6 +150,52 @@ func TestPatchReceiverSession_AppendsChargingPeriods(t *testing.T) {
 	}
 }
 
+func TestPatchReceiverSession_URLWinsOverBodyIdentity(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	session := map[string]any{
+		"id":           "SESS-1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"status":       "ACTIVE",
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-1", data)
+
+	// PATCH body attempts to rename and transfer ownership.
+	body := `{"id":"HIJACK","country_code":"NL","party_id":"BBB","status":"COMPLETED","last_updated":"2026-01-01T00:05:00Z"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/sessions/DE/AAA/SESS-1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "SESS-1"})
+
+	h.PatchReceiverSession(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	raw, _ := store.GetSession("SESS-1")
+	var merged map[string]any
+	json.Unmarshal(raw, &merged)
+	if merged["id"] != "SESS-1" {
+		t.Errorf("expected id SESS-1, got %v", merged["id"])
+	}
+	if merged["country_code"] != "DE" {
+		t.Errorf("expected country_code DE, got %v", merged["country_code"])
+	}
+	if merged["party_id"] != "AAA" {
+		t.Errorf("expected party_id AAA, got %v", merged["party_id"])
+	}
+	if merged["status"] != "COMPLETED" {
+		t.Errorf("expected status update to apply, got %v", merged["status"])
+	}
+	// No stray session should have been minted under the hijacked id.
+	if hijack, _ := store.GetSession("HIJACK"); hijack != nil {
+		t.Error("expected no session at hijacked id")
+	}
+}
+
 func TestPatchReceiverSession_RequiresLastUpdated(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

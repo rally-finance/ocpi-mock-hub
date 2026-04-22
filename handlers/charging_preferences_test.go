@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,5 +178,20 @@ func TestPutChargingPreferences_RejectsEmptyProfileType(t *testing.T) {
 	w := putChargingPreferences(h, "SESS-1", `{}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestPutChargingPreferences_FailsLoudlyWhenStoreErrors(t *testing.T) {
+	h := chargingPrefsHandler(t)
+	store := h.Store.(*testStore)
+	store.putSessionErr = errors.New("boom")
+
+	w := putChargingPreferences(h, "SESS-1", `{"profile_type":"REGULAR"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when store fails, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	// Must not lie by replying ACCEPTED.
+	if strings.Contains(w.Body.String(), chargingPreferencesAccepted) {
+		t.Errorf("expected no ACCEPTED reply on persistence failure, got body %s", w.Body.String())
 	}
 }

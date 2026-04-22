@@ -54,17 +54,16 @@ func (h *Handler) PutToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fold identifiers from the URL into the stored body so listings remain
-	// well-formed even if the client omitted them.
+	// Fold identifiers from the URL + ?type= into the stored body so the
+	// persisted token can never disagree with the storage key. Treat URL
+	// parameters as authoritative (route them, store under them).
 	if len(body) > 0 {
 		var parsed map[string]any
 		if err := json.Unmarshal(body, &parsed); err == nil {
 			parsed["country_code"] = cc
 			parsed["party_id"] = pid
 			parsed["uid"] = uid
-			if _, ok := parsed["type"]; !ok {
-				parsed["type"] = tokenType
-			}
+			parsed["type"] = tokenType
 			if merged, err := json.Marshal(parsed); err == nil {
 				body = merged
 			}
@@ -124,12 +123,11 @@ func (h *Handler) PatchToken(w http.ResponseWriter, r *http.Request) {
 	for k, v := range patch {
 		target[k] = v
 	}
+	// URL + ?type= are authoritative; a PATCH body may not rename the token.
 	target["country_code"] = cc
 	target["party_id"] = pid
 	target["uid"] = uid
-	if _, ok := target["type"]; !ok {
-		target["type"] = tokenType
-	}
+	target["type"] = tokenType
 
 	merged, err := json.Marshal(target)
 	if err != nil {

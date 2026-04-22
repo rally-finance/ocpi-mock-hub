@@ -376,6 +376,76 @@ func TestPutToken_SeparateStorageForAppUserType(t *testing.T) {
 	}
 }
 
+func TestPutToken_URLWinsOverBodyType(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	body := `{"last_updated":"2026-01-01T00:00:00Z","type":"APP_USER","country_code":"XX","party_id":"YY","uid":"OTHER"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PutToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	// URL routed as RFID, so the token must land under the bare UID key with
+	// type=RFID regardless of what the body claimed.
+	raw, _ := store.GetToken("DE", "AAA", "TOK1")
+	if raw == nil {
+		t.Fatal("expected token under RFID key from URL")
+	}
+	var stored map[string]any
+	json.Unmarshal(raw, &stored)
+	if stored["type"] != "RFID" {
+		t.Errorf("expected URL type RFID to win over body APP_USER, got %v", stored["type"])
+	}
+	if stored["country_code"] != "DE" || stored["party_id"] != "AAA" || stored["uid"] != "TOK1" {
+		t.Errorf("expected URL identifiers to win, got %v", stored)
+	}
+	// No stray APP_USER record should be written.
+	if app, _ := store.GetToken("DE", "AAA", "TOK1|APP_USER"); app != nil {
+		t.Error("expected no APP_USER record when URL type is RFID")
+	}
+}
+
+func TestPatchToken_URLWinsOverBodyType(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	existing := map[string]any{
+		"uid":          "TOK1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"type":         "RFID",
+		"whitelist":    "ALLOWED",
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(existing)
+	store.PutToken("DE", "AAA", "TOK1", data)
+
+	body := `{"type":"APP_USER","country_code":"XX","party_id":"YY","uid":"OTHER","last_updated":"2026-01-01T00:05:00Z"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PATCH", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK1", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PatchToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	raw, _ := store.GetToken("DE", "AAA", "TOK1")
+	var stored map[string]any
+	json.Unmarshal(raw, &stored)
+	if stored["type"] != "RFID" {
+		t.Errorf("expected URL type RFID to win over body APP_USER, got %v", stored["type"])
+	}
+	if stored["uid"] != "TOK1" || stored["country_code"] != "DE" || stored["party_id"] != "AAA" {
+		t.Errorf("expected URL identifiers to win, got %v", stored)
+	}
+}
+
 func TestPatchToken_MergesIntoExisting(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

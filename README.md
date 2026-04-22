@@ -186,7 +186,7 @@ The `ChargingProfiles` receiver module lets an eMSP set power limits on active s
 Generated OCPI objects include spec-realistic detail:
 
 - **Locations** — `facilities`, `opening_times`, `charging_when_closed`, `energy_mix`
-- **Tariffs** — `tariff_alt_text`, `min_price`/`max_price`, `restrictions` on elements
+- **Tariffs** — full OCPI 2.2.1 object: all five `TariffType` enum values (REGULAR, AD_HOC_PAYMENT, PROFILE_CHEAP, PROFILE_FAST, PROFILE_GREEN), all four `PriceComponent` types (ENERGY, FLAT, TIME, PARKING_TIME), `tariff_alt_text` (multi-lingual), `tariff_alt_url`, `min_price`/`max_price`, `start_date_time`/`end_date_time` validity windows, `energy_mix`, and every `TariffRestrictions` field (`start_time`/`end_time`, `start_date`/`end_date`, `min_kwh`/`max_kwh`, `min_current`/`max_current`, `min_power`/`max_power`, `min_duration`/`max_duration`, `day_of_week`, `reservation` including `RESERVATION_EXPIRES`). Seven tariffs per CPO cover the full matrix.
 - **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions
 - **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `remark`
 

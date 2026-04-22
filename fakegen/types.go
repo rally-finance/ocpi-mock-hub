@@ -60,13 +60,28 @@ type PriceComponent struct {
 	StepSize int     `json:"step_size"`
 }
 
+// TariffRestrictions mirrors OCPI 2.2.1 §11.4.3.9. Numeric thresholds use
+// pointers so handlers and tests can distinguish "unset" from a legitimate
+// zero — omitempty alone would erase a meaningful zero.
 type TariffRestrictions struct {
-	StartTime string `json:"start_time,omitempty"`
-	EndTime   string `json:"end_time,omitempty"`
+	StartTime   string   `json:"start_time,omitempty"`
+	EndTime     string   `json:"end_time,omitempty"`
+	StartDate   string   `json:"start_date,omitempty"`
+	EndDate     string   `json:"end_date,omitempty"`
+	MinKwh      *float64 `json:"min_kwh,omitempty"`
+	MaxKwh      *float64 `json:"max_kwh,omitempty"`
+	MinCurrent  *float64 `json:"min_current,omitempty"`
+	MaxCurrent  *float64 `json:"max_current,omitempty"`
+	MinPower    *float64 `json:"min_power,omitempty"`
+	MaxPower    *float64 `json:"max_power,omitempty"`
+	MinDuration *int     `json:"min_duration,omitempty"`
+	MaxDuration *int     `json:"max_duration,omitempty"`
+	DayOfWeek   []string `json:"day_of_week,omitempty"`
+	Reservation string   `json:"reservation,omitempty"`
 }
 
 type TariffElement struct {
-	PriceComponents []PriceComponent   `json:"price_components"`
+	PriceComponents []PriceComponent    `json:"price_components"`
 	Restrictions    *TariffRestrictions `json:"restrictions,omitempty"`
 }
 
@@ -80,6 +95,7 @@ type Price struct {
 	InclVat float64 `json:"incl_vat"`
 }
 
+// Tariff mirrors OCPI 2.2.1 §11.4.3.7.
 type Tariff struct {
 	CountryCode   string          `json:"country_code"`
 	PartyID       string          `json:"party_id"`
@@ -87,9 +103,13 @@ type Tariff struct {
 	Currency      string          `json:"currency"`
 	Type          string          `json:"type,omitempty"`
 	TariffAltText []DisplayText   `json:"tariff_alt_text,omitempty"`
+	TariffAltURL  string          `json:"tariff_alt_url,omitempty"`
 	MinPrice      *Price          `json:"min_price,omitempty"`
 	MaxPrice      *Price          `json:"max_price,omitempty"`
 	Elements      []TariffElement `json:"elements"`
+	StartDateTime string          `json:"start_date_time,omitempty"`
+	EndDateTime   string          `json:"end_date_time,omitempty"`
+	EnergyMix     any             `json:"energy_mix,omitempty"`
 	LastUpdated   string          `json:"last_updated"`
 }
 

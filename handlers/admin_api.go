@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rally-finance/ocpi-mock-hub/simulation"
 )
 
@@ -384,14 +385,23 @@ func (h *Handler) IssueCreditCDR(w http.ResponseWriter, r *http.Request) {
 // payload. Non-monetary fields (location, token, auth method) are preserved
 // so the credit CDR still identifies the original transaction; all monetary
 // amounts are negated, total_energy is negated, and credit/credit_reference_id
-// are set. A new id is generated to avoid collisions with the original.
+// are set. A new id is generated for each invocation — even when crediting the
+// same original CDR twice — so repeat credits are each stored and delivered
+// independently rather than clobbering prior credit CDRs.
 func buildCreditCDR(original map[string]any, originalID string) map[string]any {
 	credit := make(map[string]any, len(original)+2)
 	for k, v := range original {
 		credit[k] = v
 	}
 
-	creditID := "CDR-CREDIT-" + strings.ReplaceAll(originalID, "CDR-", "")
+	// Human-readable prefix that traces back to the original id, suffixed with
+	// a short uuid so two consecutive credits against the same original stay
+	// distinct in storage and on the wire.
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	creditID := "CDR-CREDIT-" + strings.TrimPrefix(originalID, "CDR-") + "-" + suffix
 	credit["id"] = creditID
 	credit["credit"] = true
 	credit["credit_reference_id"] = originalID

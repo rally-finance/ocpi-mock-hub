@@ -156,6 +156,56 @@ func TestIssueCreditCDR_PushesToEMSP(t *testing.T) {
 	}
 }
 
+func TestIssueCreditCDR_RepeatDoesNotOverwrite(t *testing.T) {
+	// Bugbot regression: the original buildCreditCDR derived the credit id
+	// deterministically from the source id, so two credits against the same
+	// CDR clobbered each other in storage. Each credit must now persist
+	// under a distinct id.
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	original := map[string]any{
+		"id":           "CDR-DUP-1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"total_cost":   map[string]any{"excl_vat": 1.0, "incl_vat": 1.21},
+		"total_energy": 2.0,
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(original)
+	store.PutCDR("CDR-DUP-1", data)
+
+	issue := func() string {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/admin/credit-cdr",
+			strings.NewReader(`{"cdr_id":"CDR-DUP-1","push":false}`))
+		h.IssueCreditCDR(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: got %d; body=%s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			CreditCDRID string `json:"credit_cdr_id"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp.CreditCDRID
+	}
+
+	first := issue()
+	second := issue()
+	if first == "" || second == "" {
+		t.Fatalf("empty credit id: first=%q second=%q", first, second)
+	}
+	if first == second {
+		t.Fatalf("repeat credits produced identical id %q — second would overwrite the first", first)
+	}
+	if got, _ := store.GetCDR(first); got == nil {
+		t.Error("first credit CDR was overwritten or lost")
+	}
+	if got, _ := store.GetCDR(second); got == nil {
+		t.Error("second credit CDR not stored")
+	}
+}
+
 func TestBuildCreditCDR_PreservesIdentity(t *testing.T) {
 	original := map[string]any{
 		"id":           "CDR-1",

@@ -94,18 +94,25 @@ func (h *Handler) PutChargingPreferences(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Per-profile-type required-field gating (§11.5.2.1). Every non-REGULAR
-	// profile needs a departure_time; CHEAP and FAST additionally need
-	// energy_need so the CPO can plan the session. GREEN takes whatever
-	// energy is green-available up to the departure time.
+	// Per-profile-type required-field gating. The spec ties no hard
+	// requirement to profile_type, so this is a policy choice informed by
+	// the ProfileType descriptions (§_sessions_profile_type_enum):
+	//   - FAST: "as quickly as possible, willing to pay a premium" →
+	//     neither departure_time nor energy_need is meaningful.
+	//   - REGULAR: "no special preferences" → nothing required.
+	//   - GREEN: needs departure_time so the CPO can schedule around green
+	//     energy availability; energy_need is unnecessary (take whatever
+	//     green energy is available until departure).
+	//   - CHEAP: needs both — departure_time for scheduling cheap windows,
+	//     energy_need to cap how much to deliver within those windows.
 	switch profileType {
-	case "CHEAP", "FAST", "GREEN":
+	case "CHEAP", "GREEN":
 		if prefs.DepartureTime == "" {
 			ocpiutil.OK(w, r, chargingPreferencesDepartureReqd)
 			return
 		}
 	}
-	if profileType == "CHEAP" || profileType == "FAST" {
+	if profileType == "CHEAP" {
 		if prefs.EnergyNeed == nil {
 			ocpiutil.OK(w, r, chargingPreferencesEnergyNeedReqd)
 			return

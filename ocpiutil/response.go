@@ -10,13 +10,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// OCPI 2.2.1 status codes (§5.3.3). The full enum is declared here so
+// handlers can reference any of them by name, even the ones not yet wired
+// up in this codebase. 3001/3003 in particular are slated for Stages 4–7
+// (async charging-profile flow, partial credentials wiring).
 const (
-	StatusSuccess       = 1000
-	StatusClientError   = 2000
-	StatusUnauthorized  = 2001
-	StatusInvalidParams = 2003
-	StatusUnknownObject = 2004
-	StatusServerError   = 3000
+	StatusSuccess            = 1000
+	StatusClientError        = 2000
+	StatusUnauthorized       = 2001
+	StatusNotEnoughInfo      = 2002
+	StatusInvalidParams      = 2003
+	StatusUnknownObject      = 2004
+	StatusServerError        = 3000
+	StatusUnableToUseAPI     = 3001 // reserved for Stages 4–7 (see comment above)
+	StatusUnsupportedVersion = 3002
+	StatusNoMatchingEndpoint = 3003 // reserved for Stages 4–7 (see comment above)
 )
 
 type Response struct {

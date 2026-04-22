@@ -15,7 +15,6 @@ type Config struct {
 	CommandDelayMS               int
 	EMSPCallbackURL              string
 	SeedLocations                int
-	EncodeBase64                 bool
 	Mode                         string
 	RedisURL                     string
 }
@@ -31,7 +30,6 @@ func LoadConfig() Config {
 		CommandDelayMS:               envInt("MOCK_COMMAND_DELAY_MS", 2000),
 		EMSPCallbackURL:              envOr("EMSP_CALLBACK_URL", "http://localhost:3000/api/ocpi"),
 		SeedLocations:                envInt("MOCK_SEED_LOCATIONS", 50),
-		EncodeBase64:                 envOr("MOCK_ENCODE_BASE64", "false") == "true",
 		Mode:                         envOr("MOCK_MODE", "happy"),
 		RedisURL:                     os.Getenv("FREE_TIER_REDIS_URL"),
 	}

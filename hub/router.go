@@ -33,7 +33,6 @@ func NewRouter(app *App) http.Handler {
 		HubParty:                     app.Config.HubParty,
 		InitiateHandshakeVersionsURL: app.Config.InitiateHandshakeVersionsURL,
 		EMSPCallbackURL:              app.Config.EMSPCallbackURL,
-		EncodeBase64:                 app.Config.EncodeBase64,
 		CommandDelayMS:               app.Config.CommandDelayMS,
 		SessionDurationS:             app.Config.SessionDurationS,
 	}, app.Store, app.Seed, reqLog, app.Correctness, httpClient)
@@ -43,6 +42,8 @@ func NewRouter(app *App) http.Handler {
 	// OCPI version discovery
 	r.Get("/ocpi/versions", h.GetVersions)
 	r.Get("/ocpi/2.2.1", h.GetVersionDetails)
+	// Catch-all for other OCPI version strings; responds with 3002 unsupported-version.
+	r.Get("/ocpi/{version}", h.GetVersionDetails)
 
 	// OCPI credentials
 	r.Post("/ocpi/2.2.1/credentials", h.PostCredentials)
@@ -59,6 +60,7 @@ func NewRouter(app *App) http.Handler {
 	r.Get("/ocpi/2.2.1/sender/tariffs/{countryCode}/{partyID}/{tariffID}", h.GetTariff)
 	r.Get("/ocpi/2.2.1/sender/sessions", h.GetSessions)
 	r.Get("/ocpi/2.2.1/sender/sessions/{countryCode}/{partyID}/{sessionID}", h.GetSessionByID)
+	r.Put("/ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences", h.PutChargingPreferences)
 	r.Get("/ocpi/2.2.1/sender/cdrs", h.GetCDRs)
 	r.Get("/ocpi/2.2.1/sender/cdrs/{countryCode}/{partyID}/{cdrID}", h.GetCDRByID)
 	r.Get("/ocpi/2.2.1/sender/tokens", h.GetTokens)
@@ -68,8 +70,11 @@ func NewRouter(app *App) http.Handler {
 
 	// OCPI receiver modules (eMSP pushes data to hub)
 	r.Put("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.PutToken)
+	r.Patch("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.PatchToken)
+	r.Get("/ocpi/2.2.1/receiver/tokens/{countryCode}/{partyID}/{uid}", h.GetReceiverToken)
 	r.Post("/ocpi/2.2.1/receiver/commands/{command}", h.PostCommand)
 	r.Put("/ocpi/2.2.1/receiver/sessions/{countryCode}/{partyID}/{sessionID}", h.PutReceiverSession)
+	r.Patch("/ocpi/2.2.1/receiver/sessions/{countryCode}/{partyID}/{sessionID}", h.PatchReceiverSession)
 	r.Post("/ocpi/2.2.1/receiver/cdrs", h.PostReceiverCDR)
 	r.Get("/ocpi/2.2.1/receiver/cdrs/{cdrID}", h.GetReceiverCDR)
 	r.Put("/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}", h.PutChargingProfile)

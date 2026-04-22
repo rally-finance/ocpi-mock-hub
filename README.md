@@ -124,6 +124,7 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 | GET | `/ocpi/2.2.1/sender/tariffs/{cc}/{pid}/{tariffID}` | Token B | Get single tariff |
 | GET | `/ocpi/2.2.1/sender/sessions` | Token B | List sessions |
 | GET | `/ocpi/2.2.1/sender/sessions/{cc}/{pid}/{sessionID}` | Token B | Get single session |
+| PUT | `/ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences` | Token B | Submit ChargingPreferences for an ACTIVE session |
 | GET | `/ocpi/2.2.1/sender/cdrs` | Token B | List CDRs |
 | GET | `/ocpi/2.2.1/sender/cdrs/{cc}/{pid}/{cdrID}` | Token B | Get single CDR |
 | GET | `/ocpi/2.2.1/sender/tokens` | Token B | List tokens |
@@ -135,9 +136,12 @@ Or use the admin UI at `http://localhost:4000/admin/` to initiate a hub-to-eMSP 
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/update a token |
+| PUT | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Push/replace a token (`?type=` selects TokenType, default `RFID`) |
+| PATCH | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Merge partial token update (requires `last_updated`) |
+| GET | `/ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}` | Token B | Read back the stored token (eMSP validation) |
 | POST | `/ocpi/2.2.1/receiver/commands/{command}` | Token B | Send a command |
-| PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/update a session |
+| PUT | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Push/replace a session |
+| PATCH | `/ocpi/2.2.1/receiver/sessions/{cc}/{pid}/{sessionID}` | Token B | Merge partial session update; `charging_periods` appends |
 | POST | `/ocpi/2.2.1/receiver/cdrs` | Token B | Push a CDR (returns `Location` header) |
 | GET | `/ocpi/2.2.1/receiver/cdrs/{cdrID}` | Token B | Get a received CDR |
 | PUT | `/ocpi/2.2.1/receiver/chargingprofiles/{sessionID}` | Token B | Set charging profile for a session |
@@ -152,13 +156,29 @@ The hub supports multiple eMSPs connected simultaneously. Each party gets its ow
 
 Use the admin-initiated handshake flow or standard `POST /credentials` from different eMSPs to register multiple parties.
 
+## Charging Preferences
+
+OCPI 2.2.1 adds a `ChargingPreferences` endpoint that lets an eMSP pass user
+intent (profile type, departure time, energy need, V2G allowance) for an
+active session. The mock exposes it at
+`PUT /ocpi/2.2.1/sender/sessions/{sessionID}/charging_preferences` and returns
+the full `ChargingPreferencesResponse` enum depending on session state and the
+request body:
+
+- `ACCEPTED` — stored on the session so the simulation can consume it.
+- `DEPARTURE_REQUIRED` — missing `departure_time` for `CHEAP` or `GREEN`.
+- `ENERGY_NEED_REQUIRED` — missing `energy_need` for `CHEAP`.
+- `PROFILE_TYPE_NOT_SUPPORTED` — unrecognized `profile_type`.
+- `NOT_POSSIBLE` — session is not `ACTIVE`, or the EVSE does not advertise
+  `CHARGING_PREFERENCES_CAPABLE` (roughly half of seeded EVSEs do).
+
 ## Charging Profiles
 
 The `ChargingProfiles` receiver module lets an eMSP set power limits on active sessions:
 
 - **PUT** stores the profile and sends an async `ActiveChargingProfileResult` callback
 - **GET** returns the stored profile or a default `ActiveChargingProfile`
-- **DELETE** clears the profile and sends a `ClearProfileResult` callback
+- **DELETE** clears the profile (async `ClearProfileResult` callback planned)
 - The simulation lifecycle respects `min_charging_rate` from active profiles to cap kWh growth
 
 ## Data Model Enrichment
@@ -179,7 +199,7 @@ Navigate to `/admin/` for a built-in dashboard with:
 - **Push controls** — trigger location/tariff update pushes with configurable traffic patterns (burst, staggered, realistic)
 - **Locations** — browse seed data
 - **Sessions & CDRs** — monitor active sessions and completed CDRs
-- **Request log** — last 100 OCPI requests
+- **Request log** — last 500 OCPI requests
 
 ## Deploying to Vercel
 

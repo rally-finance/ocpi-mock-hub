@@ -46,13 +46,18 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	ocpiutil.OK(w, r, page, headers)
 }
 
-func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
+// getTokenByCompositeKey reads the token identified by the URL's
+// {countryCode, partyID, uid} + ?type= query param and writes it to the
+// response. Shared by the sender GET (GetTokenByID) and receiver GET
+// (GetReceiverToken) so they can never drift in their error shape.
+func (h *Handler) getTokenByCompositeKey(w http.ResponseWriter, r *http.Request) {
 	store := h.storeForRequest(r)
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
+	tokenType := tokenTypeFromRequest(r)
 
-	raw, err := store.GetToken(cc, pid, uid)
+	raw, err := store.GetToken(cc, pid, tokenStorageUID(uid, tokenType))
 	if err != nil {
 		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get token")
 		return
@@ -65,8 +70,18 @@ func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
 	ocpiutil.OK(w, r, json.RawMessage(raw))
 }
 
+func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
+	h.getTokenByCompositeKey(w, r)
+}
+
 type authorizeRequest struct {
 	LocationID string `json:"location_id,omitempty"`
+	// OCPI spec field: full LocationReferences object. Presence is required
+	// when the token's whitelist forbids offline authorization.
+	LocationReferences *struct {
+		LocationID string   `json:"location_id"`
+		EVSEUIDs   []string `json:"evse_uids,omitempty"`
+	} `json:"location_references,omitempty"`
 }
 
 func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -74,11 +89,20 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
 	uid := chi.URLParam(r, "uid")
+	tokenType := tokenTypeFromRequest(r)
+	storageUID := tokenStorageUID(uid, tokenType)
 
 	body, _ := io.ReadAll(r.Body)
 	var req authorizeRequest
 	if len(body) > 0 {
 		json.Unmarshal(body, &req)
+	}
+	// Backfill LocationReferences from the flat location_id field for backwards compat.
+	if req.LocationReferences == nil && req.LocationID != "" {
+		req.LocationReferences = &struct {
+			LocationID string   `json:"location_id"`
+			EVSEUIDs   []string `json:"evse_uids,omitempty"`
+		}{LocationID: req.LocationID}
 	}
 
 	mode, _ := store.GetMode()
@@ -99,7 +123,7 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _ := store.GetToken(cc, pid, uid)
+	raw, _ := store.GetToken(cc, pid, storageUID)
 	if raw == nil {
 		ocpiutil.OK(w, r, map[string]any{
 			"allowed": "NOT_ALLOWED",
@@ -111,13 +135,26 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	var tokenData map[string]any
 	json.Unmarshal(raw, &tokenData)
 
+	// Tokens with whitelist=NEVER require a LocationReferences object on every
+	// real-time authorization request (spec 4.4.2). Missing body → 2002.
+	if whitelist, _ := tokenData["whitelist"].(string); whitelist == "NEVER" && req.LocationReferences == nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusNotEnoughInfo,
+			"Token requires LocationReferences for real-time authorization")
+		return
+	}
+
+	locationID := ""
+	if req.LocationReferences != nil {
+		locationID = req.LocationReferences.LocationID
+	}
+
 	result := map[string]any{
 		"allowed": "ALLOWED",
 		"token":   map[string]string{"country_code": cc, "party_id": pid, "uid": uid},
 	}
 
-	if req.LocationID != "" {
-		loc := h.seedForRequest(r).LocationByID(req.LocationID)
+	if locationID != "" {
+		loc := h.seedForRequest(r).LocationByID(locationID)
 		if loc != nil && len(loc.EVSEs) > 0 {
 			evseUIDs := make([]string, 0, len(loc.EVSEs))
 			for _, e := range loc.EVSEs {

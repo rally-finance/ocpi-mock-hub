@@ -189,11 +189,17 @@ func generateEVSE(rng *rand.Rand, cpo CPO, locID string, idx int) EVSE {
 	}
 
 	statuses := []string{"AVAILABLE", "AVAILABLE", "AVAILABLE", "CHARGING", "BLOCKED"}
+	capabilities := []string{"RFID_READER", "REMOTE_START_STOP_CAPABLE"}
+	// ~50% of EVSEs advertise Charging Preferences support so eMSP clients can
+	// exercise both the ACCEPTED and NOT_POSSIBLE branches of the endpoint.
+	if rng.Float64() < 0.5 {
+		capabilities = append(capabilities, "CHARGING_PREFERENCES_CAPABLE")
+	}
 	return EVSE{
 		UID:          uid,
 		EvseID:       evseID,
 		Status:       statuses[rng.Intn(len(statuses))],
-		Capabilities: []string{"RFID_READER", "REMOTE_START_STOP_CAPABLE"},
+		Capabilities: capabilities,
 		Connectors:   connectors,
 		LastUpdated:  seedTime,
 	}

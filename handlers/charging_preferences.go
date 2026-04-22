@@ -30,10 +30,11 @@ type chargingPreferences struct {
 	DischargeAllowed *bool    `json:"discharge_allowed,omitempty"`
 }
 
+// supportedProfileTypes mirrors the OCPI 2.2.1 ProfileType enum (§11.4.2).
 var supportedProfileTypes = map[string]bool{
 	"REGULAR": true,
 	"GREEN":   true,
-	"COMFORT": true,
+	"FAST":    true,
 	"CHEAP":   true,
 }
 
@@ -93,15 +94,18 @@ func (h *Handler) PutChargingPreferences(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Per-profile-type required-field gating (§11.5.2.1).
+	// Per-profile-type required-field gating (§11.5.2.1). Every non-REGULAR
+	// profile needs a departure_time; CHEAP and FAST additionally need
+	// energy_need so the CPO can plan the session. GREEN takes whatever
+	// energy is green-available up to the departure time.
 	switch profileType {
-	case "CHEAP", "COMFORT", "GREEN":
+	case "CHEAP", "FAST", "GREEN":
 		if prefs.DepartureTime == "" {
 			ocpiutil.OK(w, r, chargingPreferencesDepartureReqd)
 			return
 		}
 	}
-	if profileType == "CHEAP" || profileType == "COMFORT" {
+	if profileType == "CHEAP" || profileType == "FAST" {
 		if prefs.EnergyNeed == nil {
 			ocpiutil.OK(w, r, chargingPreferencesEnergyNeedReqd)
 			return

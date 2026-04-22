@@ -166,8 +166,8 @@ the full `ChargingPreferencesResponse` enum depending on session state and the
 request body:
 
 - `ACCEPTED` — stored on the session so the simulation can consume it.
-- `DEPARTURE_REQUIRED` — missing `departure_time` for `CHEAP`/`COMFORT`/`GREEN`.
-- `ENERGY_NEED_REQUIRED` — missing `energy_need` for `CHEAP`/`COMFORT`.
+- `DEPARTURE_REQUIRED` — missing `departure_time` for `CHEAP`/`FAST`/`GREEN`.
+- `ENERGY_NEED_REQUIRED` — missing `energy_need` for `CHEAP`/`FAST`.
 - `PROFILE_TYPE_NOT_SUPPORTED` — unrecognized `profile_type`.
 - `NOT_POSSIBLE` — session is not `ACTIVE`, or the EVSE does not advertise
   `CHARGING_PREFERENCES_CAPABLE` (roughly half of seeded EVSEs do).

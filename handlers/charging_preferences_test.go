@@ -132,12 +132,37 @@ func TestPutChargingPreferences_GreenRequiresDepartureButNotEnergy(t *testing.T)
 	}
 }
 
+func TestPutChargingPreferences_FastRequiresDepartureAndEnergy(t *testing.T) {
+	h := chargingPrefsHandler(t)
+
+	w := putChargingPreferences(h, "SESS-1", `{"profile_type":"FAST"}`)
+	if got := decodePreferencesResult(t, w); got != chargingPreferencesDepartureReqd {
+		t.Fatalf("expected DEPARTURE_REQUIRED, got %s", got)
+	}
+
+	w = putChargingPreferences(h, "SESS-1", `{"profile_type":"FAST","departure_time":"2026-01-01T10:00:00Z"}`)
+	if got := decodePreferencesResult(t, w); got != chargingPreferencesEnergyNeedReqd {
+		t.Fatalf("expected ENERGY_NEED_REQUIRED, got %s", got)
+	}
+
+	w = putChargingPreferences(h, "SESS-1", `{"profile_type":"FAST","departure_time":"2026-01-01T10:00:00Z","energy_need":30}`)
+	if got := decodePreferencesResult(t, w); got != chargingPreferencesAccepted {
+		t.Fatalf("expected ACCEPTED, got %s", got)
+	}
+}
+
 func TestPutChargingPreferences_UnsupportedProfileType(t *testing.T) {
 	h := chargingPrefsHandler(t)
 
 	w := putChargingPreferences(h, "SESS-1", `{"profile_type":"TURBO"}`)
 	if got := decodePreferencesResult(t, w); got != chargingPreferencesProfileNotSup {
 		t.Fatalf("expected PROFILE_TYPE_NOT_SUPPORTED, got %s", got)
+	}
+
+	// COMFORT used to be in our enum by mistake; spec doesn't define it.
+	w = putChargingPreferences(h, "SESS-1", `{"profile_type":"COMFORT"}`)
+	if got := decodePreferencesResult(t, w); got != chargingPreferencesProfileNotSup {
+		t.Fatalf("COMFORT is not a spec ProfileType; expected PROFILE_TYPE_NOT_SUPPORTED, got %s", got)
 	}
 }
 

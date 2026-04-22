@@ -143,22 +143,8 @@ func (h *Handler) PatchToken(w http.ResponseWriter, r *http.Request) {
 
 // GetReceiverToken handles GET /ocpi/2.2.1/receiver/tokens/{cc}/{pid}/{uid}?type=.
 // Mirrors the sender-side GetTokenByID but lives under the receiver URL, which
-// lets an eMSP verify the latest token state the hub has for it.
+// lets an eMSP verify the latest token state the hub has for it. Both routes
+// share getTokenByCompositeKey so their error shape cannot drift.
 func (h *Handler) GetReceiverToken(w http.ResponseWriter, r *http.Request) {
-	store := h.storeForRequest(r)
-	cc := chi.URLParam(r, "countryCode")
-	pid := chi.URLParam(r, "partyID")
-	uid := chi.URLParam(r, "uid")
-	tokenType := tokenTypeFromRequest(r)
-
-	raw, err := store.GetToken(cc, pid, tokenStorageUID(uid, tokenType))
-	if err != nil {
-		ocpiutil.Error(w, r, http.StatusInternalServerError, ocpiutil.StatusServerError, "Failed to get token")
-		return
-	}
-	if raw == nil {
-		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnknownObject, "Token not found")
-		return
-	}
-	ocpiutil.OK(w, r, json.RawMessage(raw))
+	h.getTokenByCompositeKey(w, r)
 }

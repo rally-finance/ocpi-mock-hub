@@ -46,7 +46,11 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	ocpiutil.OK(w, r, page, headers)
 }
 
-func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
+// getTokenByCompositeKey reads the token identified by the URL's
+// {countryCode, partyID, uid} + ?type= query param and writes it to the
+// response. Shared by the sender GET (GetTokenByID) and receiver GET
+// (GetReceiverToken) so they can never drift in their error shape.
+func (h *Handler) getTokenByCompositeKey(w http.ResponseWriter, r *http.Request) {
 	store := h.storeForRequest(r)
 	cc := chi.URLParam(r, "countryCode")
 	pid := chi.URLParam(r, "partyID")
@@ -64,6 +68,10 @@ func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ocpiutil.OK(w, r, json.RawMessage(raw))
+}
+
+func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
+	h.getTokenByCompositeKey(w, r)
 }
 
 type authorizeRequest struct {

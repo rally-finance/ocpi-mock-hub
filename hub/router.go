@@ -33,7 +33,6 @@ func NewRouter(app *App) http.Handler {
 		HubParty:                     app.Config.HubParty,
 		InitiateHandshakeVersionsURL: app.Config.InitiateHandshakeVersionsURL,
 		EMSPCallbackURL:              app.Config.EMSPCallbackURL,
-		EncodeBase64:                 app.Config.EncodeBase64,
 		CommandDelayMS:               app.Config.CommandDelayMS,
 		SessionDurationS:             app.Config.SessionDurationS,
 	}, app.Store, app.Seed, reqLog, app.Correctness, httpClient)
@@ -43,6 +42,8 @@ func NewRouter(app *App) http.Handler {
 	// OCPI version discovery
 	r.Get("/ocpi/versions", h.GetVersions)
 	r.Get("/ocpi/2.2.1", h.GetVersionDetails)
+	// Catch-all for other OCPI version strings; responds with 3002 unsupported-version.
+	r.Get("/ocpi/{version}", h.GetVersionDetails)
 
 	// OCPI credentials
 	r.Post("/ocpi/2.2.1/credentials", h.PostCredentials)

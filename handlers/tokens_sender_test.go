@@ -327,6 +327,60 @@ func TestPostTokenAuthorize_NotAllowed(t *testing.T) {
 	}
 }
 
+func TestPostTokenAuthorize_WhitelistNeverRequiresLocationReferences(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	tok := map[string]any{"uid": "TOK1", "whitelist": "NEVER"}
+	data, _ := json.Marshal(tok)
+	store.PutToken("DE", "AAA", "TOK1", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/authorize", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PostTokenAuthorize(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.StatusCode != 2002 {
+		t.Fatalf("expected OCPI status 2002, got %d", resp.StatusCode)
+	}
+}
+
+func TestPostTokenAuthorize_AcceptsLocationReferencesObject(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	tok := map[string]any{"uid": "TOK1", "whitelist": "NEVER"}
+	data, _ := json.Marshal(tok)
+	store.PutToken("DE", "AAA", "TOK1", data)
+
+	body := `{"location_references":{"location_id":"LOC-1"}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/authorize", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK1"})
+
+	h.PostTokenAuthorize(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var result map[string]any
+	json.Unmarshal(resp.Data, &result)
+	if result["allowed"] != "ALLOWED" {
+		t.Errorf("expected ALLOWED, got %v", result["allowed"])
+	}
+	if result["location"] == nil {
+		t.Error("expected location in response when location_references.location_id matches seed")
+	}
+}
+
 func TestPostTokenAuthorize_RejectMode(t *testing.T) {
 	h := testHandler()
 	h.Store.(*testStore).mode = "reject"

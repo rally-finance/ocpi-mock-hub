@@ -11,12 +11,16 @@ import (
 )
 
 const (
-	StatusSuccess       = 1000
-	StatusClientError   = 2000
-	StatusUnauthorized  = 2001
-	StatusInvalidParams = 2003
-	StatusUnknownObject = 2004
-	StatusServerError   = 3000
+	StatusSuccess            = 1000
+	StatusClientError        = 2000
+	StatusUnauthorized       = 2001
+	StatusNotEnoughInfo      = 2002
+	StatusInvalidParams      = 2003
+	StatusUnknownObject      = 2004
+	StatusServerError        = 3000
+	StatusUnableToUseAPI     = 3001
+	StatusUnsupportedVersion = 3002
+	StatusNoMatchingEndpoint = 3003
 )
 
 type Response struct {

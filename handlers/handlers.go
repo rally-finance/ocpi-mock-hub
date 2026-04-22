@@ -23,7 +23,6 @@ type HandlerConfig struct {
 	HubParty                     string
 	InitiateHandshakeVersionsURL string
 	EMSPCallbackURL              string
-	EncodeBase64                 bool
 	CommandDelayMS               int
 	SessionDurationS             int
 }

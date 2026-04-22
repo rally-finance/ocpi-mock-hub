@@ -158,7 +158,7 @@ The `ChargingProfiles` receiver module lets an eMSP set power limits on active s
 
 - **PUT** stores the profile and sends an async `ActiveChargingProfileResult` callback
 - **GET** returns the stored profile or a default `ActiveChargingProfile`
-- **DELETE** clears the profile and sends a `ClearProfileResult` callback
+- **DELETE** clears the profile (async `ClearProfileResult` callback planned)
 - The simulation lifecycle respects `min_charging_rate` from active profiles to cap kWh growth
 
 ## Data Model Enrichment
@@ -179,7 +179,7 @@ Navigate to `/admin/` for a built-in dashboard with:
 - **Push controls** — trigger location/tariff update pushes with configurable traffic patterns (burst, staggered, realistic)
 - **Locations** — browse seed data
 - **Sessions & CDRs** — monitor active sessions and completed CDRs
-- **Request log** — last 100 OCPI requests
+- **Request log** — last 500 OCPI requests
 
 ## Deploying to Vercel
 

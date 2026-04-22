@@ -159,6 +159,45 @@ func TestGetVersionsAcceptsPersistedCorrectnessPartyTokenBWithoutCorrectnessOver
 	}
 }
 
+func TestGetVersionDetails_UnsupportedVersionReturns3002(t *testing.T) {
+	h := &Handler{Config: HandlerConfig{TokenA: "token-a"}}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/2.3", nil)
+	req.Header.Set("Authorization", authHeader("token-a"))
+	req = withChiParams(req, map[string]string{"version": "2.3"})
+
+	rr := httptest.NewRecorder()
+	h.GetVersionDetails(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	var body struct {
+		StatusCode int `json:"status_code"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.StatusCode != 3002 {
+		t.Fatalf("expected OCPI status 3002, got %d", body.StatusCode)
+	}
+}
+
+func TestGetVersionDetails_SupportedVersionOK(t *testing.T) {
+	h := &Handler{Config: HandlerConfig{TokenA: "token-a"}}
+
+	req := httptest.NewRequest("GET", "http://inner.example/ocpi/2.2.1", nil)
+	req.Header.Set("Authorization", authHeader("token-a"))
+
+	rr := httptest.NewRecorder()
+	h.GetVersionDetails(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
 func TestGetVersionsRejectsNonCorrectnessPartyTokenBWithoutOverlay(t *testing.T) {
 	store := newTestStore()
 	payload, err := json.Marshal(map[string]string{

@@ -67,6 +67,12 @@ func (h *Handler) GetTokenByID(w http.ResponseWriter, r *http.Request) {
 
 type authorizeRequest struct {
 	LocationID string `json:"location_id,omitempty"`
+	// OCPI spec field: full LocationReferences object. Presence is required
+	// when the token's whitelist forbids offline authorization.
+	LocationReferences *struct {
+		LocationID string   `json:"location_id"`
+		EVSEUIDs   []string `json:"evse_uids,omitempty"`
+	} `json:"location_references,omitempty"`
 }
 
 func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +85,13 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	var req authorizeRequest
 	if len(body) > 0 {
 		json.Unmarshal(body, &req)
+	}
+	// Backfill LocationReferences from the flat location_id field for backwards compat.
+	if req.LocationReferences == nil && req.LocationID != "" {
+		req.LocationReferences = &struct {
+			LocationID string   `json:"location_id"`
+			EVSEUIDs   []string `json:"evse_uids,omitempty"`
+		}{LocationID: req.LocationID}
 	}
 
 	mode, _ := store.GetMode()
@@ -111,13 +124,26 @@ func (h *Handler) PostTokenAuthorize(w http.ResponseWriter, r *http.Request) {
 	var tokenData map[string]any
 	json.Unmarshal(raw, &tokenData)
 
+	// Tokens with whitelist=NEVER require a LocationReferences object on every
+	// real-time authorization request (spec 4.4.2). Missing body → 2002.
+	if whitelist, _ := tokenData["whitelist"].(string); whitelist == "NEVER" && req.LocationReferences == nil {
+		ocpiutil.Error(w, r, http.StatusBadRequest, ocpiutil.StatusNotEnoughInfo,
+			"Token requires LocationReferences for real-time authorization")
+		return
+	}
+
+	locationID := ""
+	if req.LocationReferences != nil {
+		locationID = req.LocationReferences.LocationID
+	}
+
 	result := map[string]any{
 		"allowed": "ALLOWED",
 		"token":   map[string]string{"country_code": cc, "party_id": pid, "uid": uid},
 	}
 
-	if req.LocationID != "" {
-		loc := h.seedForRequest(r).LocationByID(req.LocationID)
+	if locationID != "" {
+		loc := h.seedForRequest(r).LocationByID(locationID)
 		if loc != nil && len(loc.EVSEs) > 0 {
 			evseUIDs := make([]string, 0, len(loc.EVSEs))
 			for _, e := range loc.EVSEs {

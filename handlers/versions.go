@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/rally-finance/ocpi-mock-hub/ocpiutil"
 )
 
@@ -24,8 +25,17 @@ func (h *Handler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	ocpiutil.OK(w, r, versions)
 }
 
+// SupportedOCPIVersion is the single OCPI protocol version served by the mock hub.
+const SupportedOCPIVersion = "2.2.1"
+
 func (h *Handler) GetVersionDetails(w http.ResponseWriter, r *http.Request) {
 	if !h.verifyTokenA(w, r) {
+		return
+	}
+
+	if version := chi.URLParam(r, "version"); version != "" && version != SupportedOCPIVersion {
+		ocpiutil.Error(w, r, http.StatusNotFound, ocpiutil.StatusUnsupportedVersion,
+			fmt.Sprintf("Version %q is not supported; this hub only serves %s", version, SupportedOCPIVersion))
 		return
 	}
 

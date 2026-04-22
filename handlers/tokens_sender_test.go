@@ -54,9 +54,13 @@ type testStore struct {
 	reservations     map[string][]byte
 	chargingProfiles map[string][]byte
 	parties          map[string][]byte
-	tokenBIndex      map[string]string
-	mode             string
-	putSessionErr    error
+	// tokenBIndex maps a TokenB to the set of party keys authenticated under
+	// it. Mirrors the production MemoryStore semantics so tests exercise the
+	// Stage 7 invariant: a single TokenB can back several party contexts,
+	// and removing one party must not invalidate the binding for siblings.
+	tokenBIndex   map[string]map[string]bool
+	mode          string
+	putSessionErr error
 }
 
 func newTestStore() *testStore {
@@ -67,7 +71,7 @@ func newTestStore() *testStore {
 		reservations:     make(map[string][]byte),
 		chargingProfiles: make(map[string][]byte),
 		parties:          make(map[string][]byte),
-		tokenBIndex:      make(map[string]string),
+		tokenBIndex:      make(map[string]map[string]bool),
 		mode:             "happy",
 	}
 }
@@ -146,22 +150,42 @@ func (s *testStore) DeleteChargingProfile(sessionID string) error {
 	return nil
 }
 func (s *testStore) PutParty(key string, state []byte) error {
+	// Unbind the key from its previous TokenB (if any) before reindexing,
+	// leaving siblings on the same token untouched.
+	if old, ok := s.parties[key]; ok {
+		var prev struct {
+			TokenB string `json:"token_b"`
+		}
+		if json.Unmarshal(old, &prev) == nil && prev.TokenB != "" {
+			s.unbindTokenB(prev.TokenB, key)
+		}
+	}
 	s.parties[key] = state
 	var p struct {
 		TokenB string `json:"token_b"`
 	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
-		s.tokenBIndex[p.TokenB] = key
+		set, ok := s.tokenBIndex[p.TokenB]
+		if !ok {
+			set = make(map[string]bool)
+			s.tokenBIndex[p.TokenB] = set
+		}
+		set[key] = true
 	}
 	return nil
 }
 func (s *testStore) GetParty(key string) ([]byte, error) { return s.parties[key], nil }
 func (s *testStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
-	key, ok := s.tokenBIndex[tokenB]
-	if !ok {
+	set, ok := s.tokenBIndex[tokenB]
+	if !ok || len(set) == 0 {
 		return nil, nil
 	}
-	return s.parties[key], nil
+	for key := range set {
+		if party, ok := s.parties[key]; ok {
+			return party, nil
+		}
+	}
+	return nil, nil
 }
 func (s *testStore) DeleteParty(key string) error {
 	if raw, ok := s.parties[key]; ok {
@@ -169,11 +193,21 @@ func (s *testStore) DeleteParty(key string) error {
 			TokenB string `json:"token_b"`
 		}
 		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
-			delete(s.tokenBIndex, p.TokenB)
+			s.unbindTokenB(p.TokenB, key)
 		}
 	}
 	delete(s.parties, key)
 	return nil
+}
+func (s *testStore) unbindTokenB(tokenB, partyKey string) {
+	set, ok := s.tokenBIndex[tokenB]
+	if !ok {
+		return
+	}
+	delete(set, partyKey)
+	if len(set) == 0 {
+		delete(s.tokenBIndex, tokenB)
+	}
 }
 func (s *testStore) ListParties() ([][]byte, error) {
 	r := make([][]byte, 0, len(s.parties))

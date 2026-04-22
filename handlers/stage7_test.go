@@ -326,6 +326,63 @@ func TestRegisterCredentials_PersistsOneRolePerParty(t *testing.T) {
 	}
 }
 
+func TestRegisterCredentials_SharedTokenBSurvivesSiblingDeletion(t *testing.T) {
+	// Bugbot regression: the testStore used to overwrite the TokenB index on
+	// each PutParty, so handler tests silently contradicted the production
+	// multi-party semantics. With the fix, two roles that share a TokenB
+	// must both resolve by that token, and deleting one must not orphan the
+	// other from auth.
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	body := `{
+		"token": "remote-token-c",
+		"url": "https://emsp.example.com/ocpi/versions",
+		"country_code": "NL",
+		"party_id": "MSP",
+		"roles": [
+			{"role": "EMSP", "country_code": "NL", "party_id": "MSP"},
+			{"role": "EMSP", "country_code": "DE", "party_id": "MSP"}
+		]
+	}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/credentials", strings.NewReader(body))
+	h.PutCredentials(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d; body=%s", w.Code, w.Body.String())
+	}
+	tokenB := store.tokenB
+	if tokenB == "" {
+		t.Fatal("TokenB not issued")
+	}
+
+	// Both roles resolve by TokenB.
+	if got, _ := store.GetPartyByTokenB(tokenB); got == nil {
+		t.Fatal("TokenB should resolve to a registered party after multi-role PUT")
+	}
+
+	// Drop one sibling: the shared TokenB must still resolve.
+	store.DeleteParty("NL/MSP")
+	got, _ := store.GetPartyByTokenB(tokenB)
+	if got == nil {
+		t.Fatal("deleting NL/MSP should not invalidate TokenB shared with DE/MSP")
+	}
+	var remaining struct {
+		Key string `json:"key"`
+	}
+	json.Unmarshal(got, &remaining)
+	if remaining.Key != "DE/MSP" {
+		t.Errorf("expected DE/MSP to answer after NL/MSP deletion, got %q", remaining.Key)
+	}
+
+	// Drop the last sibling: the binding clears.
+	store.DeleteParty("DE/MSP")
+	if got, _ := store.GetPartyByTokenB(tokenB); got != nil {
+		t.Error("TokenB should be unbound once all siblings are deleted")
+	}
+}
+
 func TestRegisterCredentials_SingleRoleFallback(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

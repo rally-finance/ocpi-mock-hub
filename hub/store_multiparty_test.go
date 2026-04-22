@@ -81,6 +81,45 @@ func TestMultiParty_DeleteParty(t *testing.T) {
 	}
 }
 
+func TestMultiParty_SharedTokenB_TwoRoles(t *testing.T) {
+	// OCPI 2.2.1 §8.4.3: a single credentials exchange can advertise
+	// multiple roles that share one TokenB. Both roles must resolve by
+	// TokenB, and deleting one must leave the other still routable.
+	s := NewMemoryStore()
+
+	sharedToken := "shared-token-b"
+	p1 := PartyState{Key: "NL/MSP", CountryCode: "NL", PartyID: "MSP", TokenB: sharedToken, Role: "EMSP"}
+	p2 := PartyState{Key: "DE/MSP", CountryCode: "DE", PartyID: "MSP", TokenB: sharedToken, Role: "EMSP"}
+	d1, _ := json.Marshal(p1)
+	d2, _ := json.Marshal(p2)
+	s.PutParty("NL/MSP", d1)
+	s.PutParty("DE/MSP", d2)
+
+	got, _ := s.GetPartyByTokenB(sharedToken)
+	if got == nil {
+		t.Fatal("expected any party to resolve for shared token")
+	}
+
+	// Deleting NL must not invalidate DE.
+	s.DeleteParty("NL/MSP")
+	got, _ = s.GetPartyByTokenB(sharedToken)
+	if got == nil {
+		t.Fatal("expected DE to still resolve after NL deleted")
+	}
+	var ps PartyState
+	json.Unmarshal(got, &ps)
+	if ps.Key != "DE/MSP" {
+		t.Errorf("expected DE/MSP after NL deletion, got %s", ps.Key)
+	}
+
+	// Deleting the last one drops the token binding.
+	s.DeleteParty("DE/MSP")
+	got, _ = s.GetPartyByTokenB(sharedToken)
+	if got != nil {
+		t.Error("expected token binding to be cleared once all parties gone")
+	}
+}
+
 func TestMultiParty_ListParties(t *testing.T) {
 	s := NewMemoryStore()
 

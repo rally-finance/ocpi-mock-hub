@@ -340,6 +340,10 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 	cdr["total_reservation_cost"] = map[string]float64{"excl_vat": 0, "incl_vat": 0}
 	cdr["invoice_reference_id"] = "INV-" + cdrID
 	cdr["home_charging_compensation"] = false
+	// `credit` is always explicitly false on a freshly generated CDR so that
+	// downstream consumers can distinguish between "missing" and "positive CDR"
+	// without ambiguity; credit CDRs flip this to true via the admin endpoint.
+	cdr["credit"] = false
 	if s.seed != nil {
 		if tariffs := s.seed.TariffsByParty(session.CountryCode, session.PartyID); len(tariffs) > 0 {
 			// Attach up to two matching-currency tariffs to keep the CDR

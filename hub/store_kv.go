@@ -246,7 +246,9 @@ func (r *RedisStore) DeleteReservation(id string) error {
 }
 
 func (r *RedisStore) PutParty(key string, state []byte) error {
-	// Remove stale tokenB index if the party already exists with a different TokenB
+	// If the party already exists under a different TokenB, rebind: remove
+	// this key from the old token's set (preserving any sibling parties that
+	// share it) before indexing under the new one.
 	if existing, _ := r.get("party:" + key); existing != "" {
 		var old struct {
 			TokenB string `json:"token_b"`
@@ -256,7 +258,7 @@ func (r *RedisStore) PutParty(key string, state []byte) error {
 				TokenB string `json:"token_b"`
 			}
 			if json.Unmarshal(state, &incoming) == nil && incoming.TokenB != old.TokenB {
-				r.del("tokenb:" + old.TokenB)
+				r.unbindTokenBKey(old.TokenB, key)
 			}
 		}
 	}
@@ -268,7 +270,7 @@ func (r *RedisStore) PutParty(key string, state []byte) error {
 		TokenB string `json:"token_b"`
 	}
 	if json.Unmarshal(state, &p) == nil && p.TokenB != "" {
-		return r.set("tokenb:"+p.TokenB, key)
+		return r.bindTokenBKey(p.TokenB, key)
 	}
 	return nil
 }
@@ -281,12 +283,30 @@ func (r *RedisStore) GetParty(key string) ([]byte, error) {
 	return []byte(v), err
 }
 
+// GetPartyByTokenB looks up any party registered under the given TokenB. For
+// multi-party connections (one TokenB shared by multiple roles) the first
+// resolvable party wins — callers that need party context must still
+// disambiguate via OCPI routing headers or URL path parameters.
 func (r *RedisStore) GetPartyByTokenB(tokenB string) ([]byte, error) {
-	key, err := r.get("tokenb:" + tokenB)
-	if key == "" {
+	raw, err := r.get("tokenb:" + tokenB)
+	if raw == "" {
 		return nil, err
 	}
-	return r.GetParty(key)
+	var keys []string
+	if err := json.Unmarshal([]byte(raw), &keys); err != nil {
+		// Back-compat: older deployments stored the bare key as a string.
+		return r.GetParty(raw)
+	}
+	for _, key := range keys {
+		party, err := r.GetParty(key)
+		if err != nil {
+			return nil, err
+		}
+		if party != nil {
+			return party, nil
+		}
+	}
+	return nil, nil
 }
 
 func (r *RedisStore) DeleteParty(key string) error {
@@ -296,10 +316,61 @@ func (r *RedisStore) DeleteParty(key string) error {
 			TokenB string `json:"token_b"`
 		}
 		if json.Unmarshal(raw, &p) == nil && p.TokenB != "" {
-			r.del("tokenb:" + p.TokenB)
+			r.unbindTokenBKey(p.TokenB, key)
 		}
 	}
 	return r.del("party:" + key)
+}
+
+func (r *RedisStore) readTokenBKeys(tokenB string) ([]string, error) {
+	raw, err := r.get("tokenb:" + tokenB)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var keys []string
+	if err := json.Unmarshal([]byte(raw), &keys); err == nil {
+		return keys, nil
+	}
+	// Legacy: single-string encoding prior to multi-party wiring.
+	return []string{raw}, nil
+}
+
+func (r *RedisStore) bindTokenBKey(tokenB, key string) error {
+	keys, err := r.readTokenBKeys(tokenB)
+	if err != nil {
+		return err
+	}
+	for _, existing := range keys {
+		if existing == key {
+			encoded, _ := json.Marshal(keys)
+			return r.set("tokenb:"+tokenB, string(encoded))
+		}
+	}
+	keys = append(keys, key)
+	encoded, _ := json.Marshal(keys)
+	return r.set("tokenb:"+tokenB, string(encoded))
+}
+
+func (r *RedisStore) unbindTokenBKey(tokenB, key string) {
+	keys, err := r.readTokenBKeys(tokenB)
+	if err != nil || len(keys) == 0 {
+		return
+	}
+	remaining := keys[:0]
+	for _, existing := range keys {
+		if existing != key {
+			remaining = append(remaining, existing)
+		}
+	}
+	if len(remaining) == 0 {
+		r.del("tokenb:" + tokenB)
+		return
+	}
+	encoded, _ := json.Marshal(remaining)
+	_ = r.set("tokenb:"+tokenB, string(encoded))
 }
 
 func (r *RedisStore) ListParties() ([][]byte, error) {

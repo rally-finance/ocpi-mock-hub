@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rally-finance/ocpi-mock-hub/simulation"
 )
@@ -288,6 +292,199 @@ func (h *Handler) PushActiveProfile(w http.ResponseWriter, r *http.Request) {
 		"session_id": req.SessionID,
 		"target_url": req.TargetURL,
 	})
+}
+
+// IssueCreditCDR produces an OCPI 2.2.1 credit CDR for a previously stored
+// CDR. Per spec (§9.2.3.3), a credit CDR corrects or reverses an original CDR
+// and MUST carry credit=true plus credit_reference_id referencing the
+// original CDR's id. The hub derives a credit CDR by copying the source CDR,
+// generating a fresh id, negating all monetary totals and the total_energy,
+// and bumping last_updated. The credit CDR is stored and, if the hub has an
+// active handshake, pushed to the eMSP receiver/cdrs endpoint so the
+// counterparty reconciles against it.
+//
+// Request body: {"cdr_id": "CDR-xyz", "push": true}
+// `push` defaults to true — set false to store the credit CDR without sending.
+func (h *Handler) IssueCreditCDR(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CDRID string `json:"cdr_id"`
+		Push  *bool  `json:"push,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if req.CDRID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cdr_id is required"})
+		return
+	}
+
+	raw, err := h.Store.GetCDR(req.CDRID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read CDR: " + err.Error()})
+		return
+	}
+	if raw == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "CDR not found: " + req.CDRID})
+		return
+	}
+
+	var original map[string]any
+	if err := json.Unmarshal(raw, &original); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to parse stored CDR: " + err.Error()})
+		return
+	}
+
+	credit := buildCreditCDR(original, req.CDRID)
+	creditID, _ := credit["id"].(string)
+
+	encoded, err := json.Marshal(credit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to encode credit CDR: " + err.Error()})
+		return
+	}
+	if err := h.Store.PutCDR(creditID, encoded); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to store credit CDR: " + err.Error()})
+		return
+	}
+
+	push := true
+	if req.Push != nil {
+		push = *req.Push
+	}
+
+	result := map[string]any{
+		"status":              "issued",
+		"credit_cdr_id":       creditID,
+		"credit_reference_id": req.CDRID,
+		"pushed":              false,
+	}
+
+	if push {
+		authToken, emspURL, err := h.resolveEMSPPushTarget()
+		if err != nil {
+			result["push_error"] = err.Error()
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		target := strings.TrimRight(emspURL, "/") + "/receiver/cdrs"
+		if err := h.postCreditCDR(r.Context(), target, authToken, encoded); err != nil {
+			result["push_error"] = err.Error()
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		result["pushed"] = true
+		result["target_url"] = target
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// buildCreditCDR transforms an original CDR map into an OCPI 2.2.1 credit CDR
+// payload. Non-monetary fields (location, token, auth method) are preserved
+// so the credit CDR still identifies the original transaction; all monetary
+// amounts are negated, total_energy is negated, and credit/credit_reference_id
+// are set. A new id is generated to avoid collisions with the original.
+func buildCreditCDR(original map[string]any, originalID string) map[string]any {
+	credit := make(map[string]any, len(original)+2)
+	for k, v := range original {
+		credit[k] = v
+	}
+
+	creditID := "CDR-CREDIT-" + strings.ReplaceAll(originalID, "CDR-", "")
+	credit["id"] = creditID
+	credit["credit"] = true
+	credit["credit_reference_id"] = originalID
+
+	for _, field := range []string{
+		"total_cost",
+		"total_fixed_cost",
+		"total_energy_cost",
+		"total_time_cost",
+		"total_parking_cost",
+		"total_reservation_cost",
+	} {
+		if v, ok := credit[field]; ok {
+			credit[field] = negatePriceShape(v)
+		}
+	}
+	if v, ok := credit["total_energy"]; ok {
+		credit["total_energy"] = negateFloat(v)
+	}
+
+	credit["last_updated"] = nowRFC3339()
+	return credit
+}
+
+// negatePriceShape inverts the sign of an OCPI Price object ({excl_vat, incl_vat})
+// while preserving its encoding (map vs JSON number). Any non-Price shape is
+// returned untouched so malformed stored CDRs don't silently corrupt.
+func negatePriceShape(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, inner := range typed {
+			switch n := inner.(type) {
+			case float64:
+				out[k] = -n
+			case int:
+				out[k] = -n
+			default:
+				out[k] = inner
+			}
+		}
+		return out
+	case map[string]float64:
+		out := make(map[string]float64, len(typed))
+		for k, n := range typed {
+			out[k] = -n
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func negateFloat(v any) any {
+	switch n := v.(type) {
+	case float64:
+		return -n
+	case int:
+		return -n
+	default:
+		return v
+	}
+}
+
+func nowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// postCreditCDR POSTs an encoded credit CDR to the eMSP receiver/cdrs endpoint.
+// Errors surface back to the admin caller so they can distinguish "stored but
+// push failed" from "stored and delivered".
+func (h *Handler) postCreditCDR(ctx context.Context, target, authToken string, body []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Token "+authToken)
+	}
+	resp, err := h.outboundClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("push: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("push returned %d: %s", resp.StatusCode, string(snippet))
+	}
+	return nil
 }
 
 func (h *Handler) resolveEMSPPushTarget() (authToken, emspURL string, err error) {

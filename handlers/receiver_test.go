@@ -35,6 +35,76 @@ func TestPutReceiverSession_Happy(t *testing.T) {
 	}
 }
 
+func TestGetReceiverSession_Happy(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	session := map[string]any{
+		"id":           "SESS-RCV-1",
+		"country_code": "DE",
+		"party_id":     "AAA",
+		"status":       "ACTIVE",
+		"kwh":          12.5,
+		"last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-RCV-1", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/receiver/sessions/DE/AAA/SESS-RCV-1", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "SESS-RCV-1"})
+
+	h.GetReceiverSession(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	var resp ocpiResp
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	var got map[string]any
+	json.Unmarshal(resp.Data, &got)
+	if got["id"] != "SESS-RCV-1" || got["status"] != "ACTIVE" {
+		t.Errorf("unexpected session payload: %v", got)
+	}
+}
+
+func TestGetReceiverSession_WrongParty(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	session := map[string]any{
+		"id": "SESS-RCV-2", "country_code": "DE", "party_id": "AAA",
+		"status": "ACTIVE", "last_updated": "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-RCV-2", data)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/receiver/sessions/NL/BBB/SESS-RCV-2", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "NL", "partyID": "BBB", "sessionID": "SESS-RCV-2"})
+
+	h.GetReceiverSession(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", w.Code)
+	}
+}
+
+func TestGetReceiverSession_NotFound(t *testing.T) {
+	h := testHandler()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ocpi/2.2.1/receiver/sessions/DE/AAA/NOPE", nil)
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "sessionID": "NOPE"})
+
+	h.GetReceiverSession(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", w.Code)
+	}
+}
+
 func TestPostReceiverCDR_Happy(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

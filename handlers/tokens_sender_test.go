@@ -356,6 +356,62 @@ func TestPutToken_InjectsIdentifiersAndType(t *testing.T) {
 	}
 }
 
+// TestPutToken_PreservesOCPI221OptionalFields ensures the receiver PUT flow
+// round-trips the OCPI 2.2.1 optional Token fields (visual_number, issuer,
+// group_id, language, default_profile_type, energy_contract) untouched.
+// These fields are not required by the mock's own logic, but clients must be
+// able to push them through without loss.
+func TestPutToken_PreservesOCPI221OptionalFields(t *testing.T) {
+	h := testHandler()
+	store := h.Store.(*testStore)
+
+	body := `{
+		"last_updated":"2026-01-01T00:00:00Z",
+		"whitelist":"ALLOWED",
+		"valid":true,
+		"contract_id":"NL-TNM-C012345678-X",
+		"issuer":"TheNewMotion",
+		"visual_number":"DF000-2001-8999-1",
+		"group_id":"DF000-2001-8999",
+		"language":"en",
+		"default_profile_type":"GREEN",
+		"energy_contract":{"supplier_name":"GreenEnergy","contract_id":"GE-2026-0001"}
+	}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/ocpi/2.2.1/receiver/tokens/DE/AAA/TOK-OPT", strings.NewReader(body))
+	r = withChiParams(r, map[string]string{"countryCode": "DE", "partyID": "AAA", "uid": "TOK-OPT"})
+
+	h.PutToken(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+
+	raw, _ := store.GetToken("DE", "AAA", "TOK-OPT")
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal stored token: %v", err)
+	}
+
+	for _, key := range []string{
+		"visual_number", "issuer", "group_id", "language",
+		"default_profile_type", "energy_contract",
+	} {
+		if _, ok := stored[key]; !ok {
+			t.Errorf("expected optional field %q to round-trip, got %v", key, stored)
+		}
+	}
+	if stored["visual_number"] != "DF000-2001-8999-1" {
+		t.Errorf("visual_number mismatch: %v", stored["visual_number"])
+	}
+	ec, ok := stored["energy_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("energy_contract not an object: %v", stored["energy_contract"])
+	}
+	if ec["supplier_name"] != "GreenEnergy" || ec["contract_id"] != "GE-2026-0001" {
+		t.Errorf("energy_contract contents altered: %v", ec)
+	}
+}
+
 func TestPutToken_SeparateStorageForAppUserType(t *testing.T) {
 	h := testHandler()
 	store := h.Store.(*testStore)

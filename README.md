@@ -208,10 +208,13 @@ request/response + async callback pattern:
 
 Generated OCPI objects include spec-realistic detail:
 
-- **Locations** — `facilities`, `opening_times`, `charging_when_closed`, `energy_mix`
+- **Locations** — `state`, `related_locations` (additional geo-coordinates), `directions`, `operator`/`suboperator`/`owner` as full `BusinessDetails` objects with optional `website` and `logo`, `facilities`, `opening_times`, `charging_when_closed`, `images`, `energy_mix`. The `publish_allowed_to` list (`PublishTokenType`) is available on the type for private locations.
+- **EVSEs** — `status_schedule` (planned maintenance windows), `floor_level`, `physical_reference` (bay numbers), `directions`, `parking_restrictions`, `images`. Coverage is partial by design so clients see both populated and omitted optional fields in one corpus.
+- **Connectors** — `terms_and_conditions` URL in addition to the existing power, amperage, voltage, and tariff identifiers.
 - **Tariffs** — full OCPI 2.2.1 object: all five `TariffType` enum values (REGULAR, AD_HOC_PAYMENT, PROFILE_CHEAP, PROFILE_FAST, PROFILE_GREEN), all four `PriceComponent` types (ENERGY, FLAT, TIME, PARKING_TIME), `tariff_alt_text` (multi-lingual), `tariff_alt_url`, `min_price`/`max_price`, `start_date_time`/`end_date_time` validity windows, `energy_mix`, and every `TariffRestrictions` field (`start_time`/`end_time`, `start_date`/`end_date`, `min_kwh`/`max_kwh`, `min_current`/`max_current`, `min_power`/`max_power`, `min_duration`/`max_duration`, `day_of_week`, `reservation` including `RESERVATION_EXPIRES`). Seven tariffs per CPO cover the full matrix.
-- **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions
-- **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `remark`
+- **Sessions** — `authorization_reference`, `meter_id`, `charging_periods` with dimensions.
+- **CDRs** — `total_fixed_cost`, `total_energy_cost`, `total_time_cost`, `total_parking_cost`, `total_parking_time`, `total_reservation_cost`, `remark`, `meter_id` and `authorization_reference` propagated from the originating session, `invoice_reference_id`, `home_charging_compensation`, `tariffs[]` (matching the CPO/currency of the session), and a representative `signed_data` block (OCMF encoding).
+- **Tokens** — the receiver PUT/PATCH flow preserves OCPI 2.2.1 optional fields (`visual_number`, `issuer`, `group_id`, `language`, `default_profile_type`, `energy_contract`) on storage; they round-trip untouched on subsequent GETs.
 
 ## Admin UI
 

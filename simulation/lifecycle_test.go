@@ -586,6 +586,62 @@ func TestCDR_HasEnrichedFields(t *testing.T) {
 		if !ok || len(cp) == 0 {
 			t.Error("expected non-empty charging_periods in CDR")
 		}
+
+		// Stage 6 — OCPI 2.2.1 optional CDR fields. invoice_reference_id,
+		// total_reservation_cost, home_charging_compensation, and signed_data
+		// are always emitted by the mock; meter_id / authorization_reference
+		// only when the originating session carried them, which this test
+		// does not set, so we only assert the always-on fields.
+		if cdr["invoice_reference_id"] == nil {
+			t.Error("expected invoice_reference_id in CDR")
+		}
+		if cdr["total_reservation_cost"] == nil {
+			t.Error("expected total_reservation_cost in CDR")
+		}
+		if cdr["home_charging_compensation"] == nil {
+			t.Error("expected home_charging_compensation in CDR")
+		}
+		if cdr["signed_data"] == nil {
+			t.Error("expected signed_data in CDR")
+		}
+	}
+}
+
+func TestCDR_CarriesSessionMeterAndAuthRef(t *testing.T) {
+	store := newMockStore()
+
+	past := time.Now().UTC().Add(-120 * time.Second).Format(time.RFC3339)
+	session := sessionRecord{
+		CountryCode:            "DE",
+		PartyID:                "AAA",
+		ID:                     "SESS-METER",
+		StartDateTime:          past,
+		Status:                 "ACTIVE",
+		CreatedAt:              past,
+		ActivatedAt:            past,
+		Currency:               "EUR",
+		MeterID:                "METER-XYZ",
+		AuthorizationReference: "AUTH-42",
+	}
+	data, _ := json.Marshal(session)
+	store.PutSession("SESS-METER", data)
+
+	sim := New(store, nil, "", 100, 5)
+	sim.Tick()
+
+	if len(store.cdrs) != 1 {
+		t.Fatalf("expected 1 CDR, got %d", len(store.cdrs))
+	}
+	for _, cdrData := range store.cdrs {
+		var cdr map[string]any
+		json.Unmarshal(cdrData, &cdr)
+		if cdr["meter_id"] != "METER-XYZ" {
+			t.Errorf("expected meter_id propagated to CDR, got %v", cdr["meter_id"])
+		}
+		if cdr["authorization_reference"] != "AUTH-42" {
+			t.Errorf("expected authorization_reference propagated to CDR, got %v",
+				cdr["authorization_reference"])
+		}
 	}
 }
 

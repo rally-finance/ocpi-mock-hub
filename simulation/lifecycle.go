@@ -283,7 +283,10 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 	data, _ := json.Marshal(session)
 	s.store.PutSession(session.ID, data)
 
-	// Generate CDR.
+	// Generate CDR — covers the OCPI 2.2.1 CDR object including the optional
+	// fields used for tariff traceability (meter_id, authorization_reference,
+	// tariffs, invoice_reference_id, total_reservation_cost,
+	// home_charging_compensation, signed_data).
 	cdrID := "CDR-" + uuid.NewString()[:8]
 	cdr := map[string]any{
 		"country_code":    session.CountryCode,
@@ -323,6 +326,53 @@ func (s *Simulator) completeSession(session *sessionRecord, emspURL string, now 
 			},
 		},
 		"last_updated": nowStr,
+	}
+
+	// Optional OCPI 2.2.1 fields — filled in unconditionally so Stage 6 clients
+	// and contract tests see a representative example. Leaving them out would
+	// make these fields effectively untested against the mock.
+	if session.MeterID != "" {
+		cdr["meter_id"] = session.MeterID
+	}
+	if session.AuthorizationReference != "" {
+		cdr["authorization_reference"] = session.AuthorizationReference
+	}
+	cdr["total_reservation_cost"] = map[string]float64{"excl_vat": 0, "incl_vat": 0}
+	cdr["invoice_reference_id"] = "INV-" + cdrID
+	cdr["home_charging_compensation"] = false
+	if s.seed != nil {
+		if tariffs := s.seed.TariffsByParty(session.CountryCode, session.PartyID); len(tariffs) > 0 {
+			// Attach up to two matching-currency tariffs to keep the CDR
+			// compact while still exercising the tariffs[] shape.
+			chosen := make([]fakegen.Tariff, 0, 2)
+			for _, t := range tariffs {
+				if t.Currency != session.Currency {
+					continue
+				}
+				chosen = append(chosen, t)
+				if len(chosen) == 2 {
+					break
+				}
+			}
+			if len(chosen) > 0 {
+				cdr["tariffs"] = chosen
+			}
+		}
+	}
+	cdr["signed_data"] = map[string]any{
+		"encoding_method": "OCMF",
+		"signed_values": []map[string]any{
+			{
+				"nature":       "START",
+				"plain_data":   fmt.Sprintf("START|%s", session.StartDateTime),
+				"signed_data":  "mock-signature-start",
+			},
+			{
+				"nature":       "END",
+				"plain_data":   fmt.Sprintf("END|%s|%.2fkWh", nowStr, session.KWH),
+				"signed_data":  "mock-signature-end",
+			},
+		},
 	}
 
 	cdrData, _ := json.Marshal(cdr)
